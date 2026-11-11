@@ -4,6 +4,29 @@
 
 ---
 
+## 0.9 — 2026-11-11
+
+### 接入 GitHub Actions 自动构建
+
+推送或手动触发时自动跑单元测试、构建 release APK，并把产物作为 artifact 上传。
+
+关键点：**runner 上没有 API 37**（Android 17），必须在流水线里显式安装
+`platforms;android-37.0` 与 `build-tools;37.0.0`，否则构建会直接失败。
+
+上线前先在 Linux 服务器上完整复现了一遍 CI 环境验证可行性：
+
+```text
+JDK 21 + cmdline-tools + platforms;android-37.0 + build-tools;37.0.0
+→ 单元测试 24 个全过
+→ assembleRelease 成功，产物 16 MB
+→ aapt2 校验：无 INTERNET 权限
+```
+
+注意 CI 产物用的是 debug 签名（`release` 构建类型里配置的），可以直接安装自测，
+但**不能用于正式分发**——要分发需换成自己的 keystore 并通过 Secrets 注入。
+
+---
+
 ## 0.8 — 2026-11-11
 
 ### Gradle 分发源改为官方地址（无功能变更）
