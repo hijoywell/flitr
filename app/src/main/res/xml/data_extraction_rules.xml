@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  云备份与设备迁移都只带走设置和用户规则。
+  日志是本地审计数据, 不进入 include 范围即不会被备份。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="." />
+        <include domain="file" path="rules" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="." />
+        <include domain="file" path="rules" />
+    </device-transfer>
+</data-extraction-rules>

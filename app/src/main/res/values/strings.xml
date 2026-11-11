@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Flitr</string>
+    <string name="accessibility_service_label">Flitr 广告智划</string>
+    <string name="accessibility_service_description">Flitr 通过无障碍服务识别开屏广告与短剧信息流广告，在本地完成跳过与翻页。全程离线运行，不联网、不上传任何屏幕内容。</string>
+    <string name="tile_label">Flitr 暂停</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 蜂鸟图标底色: 与参考线稿一致的纯白底 + 黑描边 -->
+    <color name="ic_launcher_background">#FFFFFF</color>
+    <color name="flitr_primary">#007AFF</color>
+</resources>

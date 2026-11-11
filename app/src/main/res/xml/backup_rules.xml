@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只备份设置与用户导入的规则。
+  日志属于可丢弃的审计数据, 不参与备份 —— 因此不 include file/logs, 也就不需要 exclude。
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="." />
+    <include domain="file" path="rules" />
+</full-backup-content>

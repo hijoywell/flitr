@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "splashRules": {
+    "globalSdkSkipViewIds": [
+      "tt_splash_skip_btn",
+      "tt_splash_skip_text",
+      "splash_container_skip",
+      "ksad_splash_circle_skip_view",
+      "ksad_splash_skip_view",
+      "beizi_ad_splash_skip",
+      "bd_splash_skip",
+      "gdt_splash_skip",
+      "qumeng_splash_skip"
+    ],
+    "heuristicSkipRegex": "^(?:\\d{1,2}\\s*[sS秒]?\\s*[|｜·\\-]?\\s*)?(?:跳过|跳过广告|Skip)(?:\\s*[|｜·\\-]?\\s*\\d{1,2}\\s*[sS秒]?)?$",
+    "maxNodeScreenAreaRatio": 0.12,
+    "detectionWindowMs": 6000,
+    "throttleMs": 120
+  },
+  "videoScenarios": [
+    {
+      "packageName": "com.phoenix.read",
+      "appName": "红果短剧",
+      "enabled": true,
+      "debounceMs": 450,
+      "reactionDelayRangeMs": [380, 820],
+      "ocrFallbackEnabled": true,
+      "adIndicators": {
+        "anyTextRegex": [
+          "^广告$",
+          ".*\\s广告\\s*$",
+          "^查看详情$",
+          "^立即下载$",
+          "^去看看$",
+          "^了解详情$",
+          "^点击安装$",
+          "^领券购买$",
+          ".*秒后可?(领取|解锁|继续|跳过|划走).*",
+          "^Sponsored$"
+        ],
+        "allTextRegex": [
+          "^返回$",
+          "^上滑继续观看短剧$"
+        ],
+        "anyViewIdSuffix": [
+          "tt_reward_ad_countdown",
+          "ad_label",
+          "commerce_ad_tag"
+        ]
+      },
+      "normalDramaSafeguards": {
+        "allTextRegex": [
+          "第\\s*\\d+\\s*集",
+          "选集"
+        ],
+        "excludeWhenPanelOpenRegex": [
+          "发表评论.*",
+          "选集\\s*\\(\\d+.*",
+          "^共\\s*\\d+\\s*集$"
+        ]
+      },
+      "countdownRules": {
+        "extractRegex": "(?:还剩|观看|广告)?\\s*(\\d{1,3})\\s*(?:s|S|秒)",
+        "completedTextRegex": [
+          "已领取.*",
+          "已完成",
+          "可划走",
+          "^跳过$",
+          "领取成功"
+        ],
+        "keepWatchingDialogBtnRegex": [
+          "^继续观看$",
+          "^立即继续观看$",
+          "^开心收下$",
+          "^去领取$"
+        ],
+        "modalCloseViewIdSuffix": [
+          "tt_video_ad_close_layout",
+          "iv_close",
+          "close_btn"
+        ],
+        "maxWaitSeconds": 40
+      }
+    },
+    {
+      "packageName": "com.kuaishou.nebula",
+      "appName": "快手极速版",
+      "enabled": true,
+      "debounceMs": 450,
+      "reactionDelayRangeMs": [400, 900],
+      "ocrFallbackEnabled": false,
+      "adIndicators": {
+        "anyTextRegex": [
+          "^广告$",
+          "^查看详情$",
+          "^立即下载$",
+          "^去看看$"
+        ],
+        "anyViewIdSuffix": [
+          "ad_skip",
+          "ad_label"
+        ]
+      },
+      "normalDramaSafeguards": {
+        "allTextRegex": [
+          "第\\s*\\d+\\s*集",
+          "选集"
+        ],
+        "excludeWhenPanelOpenRegex": [
+          "写评论.*",
+          "选集.*"
+        ]
+      },
+      "countdownRules": {
+        "extractRegex": "(?:还剩|观看)?\\s*(\\d{1,3})\\s*(?:s|S|秒)",
+        "completedTextRegex": ["已完成", "可划走", "领取成功"],
+        "keepWatchingDialogBtnRegex": ["^继续观看$", "^立即继续观看$", "^开心收下$"],
+        "modalCloseViewIdSuffix": ["iv_close", "close_btn"],
+        "maxWaitSeconds": 40
+      }
+    },
+    {
+      "packageName": "com.ss.android.ugc.aweme",
+      "appName": "抖音",
+      "enabled": false,
+      "debounceMs": 450,
+      "reactionDelayRangeMs": [450, 950],
+      "ocrFallbackEnabled": false,
+      "adIndicators": {
+        "anyTextRegex": [
+          "^广告$",
+          "^查看详情$",
+          "^立即下载$"
+        ],
+        "anyViewIdSuffix": []
+      },
+      "normalDramaSafeguards": {
+        "allTextRegex": [],
+        "excludeWhenPanelOpenRegex": [
+          "留下你的精彩评论.*"
+        ]
+      },
+      "countdownRules": {
+        "extractRegex": "(\\d{1,3})\\s*(?:s|S|秒)",
+        "completedTextRegex": ["已完成"],
+        "keepWatchingDialogBtnRegex": ["继续观看"],
+        "modalCloseViewIdSuffix": [],
+        "maxWaitSeconds": 40
+      }
+    }
+  ]
+}

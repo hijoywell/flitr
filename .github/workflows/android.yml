@@ -1,0 +1,82 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 打 tag 时需要创建 Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # 本项目需要 API 37（Android 17），runner 上通常没有，必须显式安装。
+      # 新老版本的 sdkmanager 路径不同，所以做了回退。
+      - name: Install Android SDK packages
+        run: |
+          set -e
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMGR" ]; then SDKMGR="sdkmanager"; fi
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
+          echo "已安装:"
+          ls "$ANDROID_HOME/platforms"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/*.gradle.kts') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease --no-daemon --console=plain
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: flitr-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
+      # 只在打 tag（v*）时发布 Release，普通推送只出 artifact
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          echo "发布: ${GITHUB_REF_NAME}  产物: $APK ($(du -h "$APK" | cut -f1))"
+          gh release create "${GITHUB_REF_NAME}" "$APK" \
+            --title "Flitr ${GITHUB_REF_NAME}" \
+            --notes-file .github/release-notes.md
+          echo "Release 已创建: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${GITHUB_REF_NAME}"
