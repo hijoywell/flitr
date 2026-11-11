@@ -1,0 +1,17 @@
+# 统一换行符，避免 Windows 与 Linux 之间来回 checkout 产生无意义的整文件 diff
+* text=auto eol=lf
+
+# Windows 批处理必须保持 CRLF，否则 cmd 解析异常
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell 脚本在 Windows/Linux 下都用 LF
+*.ps1 text eol=lf
+
+# 二进制：不做任何换行符转换
+*.png binary
+*.jpg binary
+*.webp binary
+*.jar binary
+*.keystore binary
+*.jks binary

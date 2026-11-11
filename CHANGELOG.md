@@ -4,6 +4,23 @@
 
 ---
 
+## 0.7 — 2026-11-11
+
+### 仓库跨平台规范化（无功能变更）
+
+把代码同步到 Linux 构建机时暴露了两个仓库层面的问题：
+
+1. **`gradlew` 没有可执行位**。Windows 上 git 不记录文件权限，同步到 Linux 后 `./gradlew` 直接报
+   permission denied。已在索引里补 `+x`。
+2. **换行符会在两端来回污染**。Windows 上 Gradle 生成的 `gradlew.bat` 是 CRLF，
+   而仓库里的 blob 是 LF，同步到 Linux 后 `git status` 立刻显示该文件被修改。
+
+新增 `.gitattributes` 统一规则：文本文件一律 LF，`.bat/.cmd` 保持 CRLF，二进制不做转换。
+
+**本版没有改动任何应用代码或资源**，版本号按约定递增。
+
+---
+
 ## 0.6 — 2026-11-11
 
 ### 线条改为 +2px 加粗，但眼睛与腮红保持原图
