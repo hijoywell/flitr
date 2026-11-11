@@ -4,6 +4,23 @@
 
 ---
 
+## 1.0 — 2026-11-11
+
+### 打 tag 自动发布 GitHub Release
+
+workflow 增加 `tags: [ 'v*' ]` 触发条件：推送 `v*` 标签时，除了跑测试和构建，
+还会用 runner 自带的 `gh` CLI 创建 Release 并把 APK 作为附件上传。
+
+用 `gh` 而不是第三方 action（如 `softprops/action-gh-release`）的原因：
+runner 预装了 gh，少一个外部依赖，行为也更透明。
+
+Release 说明放在 `.github/release-notes.md`，与 README 内容分离——
+README 给开发者看（构建方式、文档索引），Release 说明给使用者看（功能、安装步骤）。
+
+首个正式发布版本 **v1.0**，对应 `versionCode 10`。
+
+---
+
 ## 0.9 — 2026-11-11
 
 ### 接入 GitHub Actions 自动构建

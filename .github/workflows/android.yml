@@ -3,11 +3,12 @@ name: Build APK
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # 打 tag 时需要创建 Release
 
 jobs:
   build:
@@ -65,3 +66,17 @@ jobs:
           name: test-report
           path: app/build/reports/tests/
           if-no-files-found: ignore
+
+      # 只在打 tag（v*）时发布 Release，普通推送只出 artifact
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          echo "发布: ${GITHUB_REF_NAME}  产物: $APK ($(du -h "$APK" | cut -f1))"
+          gh release create "${GITHUB_REF_NAME}" "$APK" \
+            --title "Flitr ${GITHUB_REF_NAME}" \
+            --notes-file .github/release-notes.md
+          echo "Release 已创建: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${GITHUB_REF_NAME}"
