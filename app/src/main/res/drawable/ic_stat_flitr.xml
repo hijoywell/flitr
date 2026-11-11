@@ -1,11 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  状态栏 / 通知图标: 蜂鸟剪影 (纯填充, 无描边)。
+  24dp 下的线稿会糊成一团, 所以状态栏用剪影, 桌面图标用线稿, 两者同源不同形。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="#FFFFFF">
+
+    <!-- 身体 -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M4,5 L20,5 L13,13 L13,19 L11,20 L11,13 Z" />
+        android:pathData="M3,14 a5,4.5 0 1,0 10,0 a5,4.5 0 1,0 -10,0 Z" />
+    <!-- 喙 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M13,12 L21,14 L13,16 Z" />
+    <!-- 翅膀 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,10 L2,4 L10,7 Z" />
+    <!-- 尾羽 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5,17 L1,22 L6,19 Z" />
+    <!-- 眼睛镂空 -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M7.4,12.2 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0 Z" />
 </vector>

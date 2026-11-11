@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 13+ 主题图标（monochrome）层。
+  系统按 alpha 重新着色, 因此不能有白色填充 —— 白色同样不透明, 会被染成实心块。
+  这一层只保留描边与少量实心部件, 几何与前景层保持一致。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="5"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M71,38 C69,31 60,28 53,32 C45,37 40,47 39,57 C38,67 44,73 52,73 C60,73 68,67 70,57 C71,50 72,44 71,38 Z" />
+
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:pathData="M44,39 C36,33 29,28 23,25" />
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:pathData="M45,47 C37,42 30,37 24,34" />
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:pathData="M47,54 C40,50 33,46 27,43" />
+
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:pathData="M43,66 C36,72 30,77 25,82" />
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:pathData="M49,71 C43,77 37,82 32,86" />
+
+    <path
+        android:fillColor="#111111"
+        android:pathData="M70,38 L88,43 L69,45 Z" />
+
+    <path
+        android:fillColor="#111111"
+        android:pathData="M61,36 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0 Z" />
+
+    <path
+        android:fillColor="#111111"
+        android:pathData="M55.4,44 a3,2.2 0 1,0 6,0 a3,2.2 0 1,0 -6,0 Z" />
+
+    <path
+        android:strokeColor="#111111"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M53,74 C53,77 52,79 51,81 M58,73 C58,76 57,78 56,80" />
+</vector>
