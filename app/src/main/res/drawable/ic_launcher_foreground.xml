@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 漏斗: 过滤语义 (Filter) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,34 L76,34 L58,56 L58,78 L50,82 L50,56 Z" />
+    <!-- 速度斜线: 轻快掠过 (Flit) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.72"
+        android:pathData="M28,48 L40,44 L40,49 L28,53 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.45"
+        android:pathData="M24,60 L36,56 L36,61 L24,65 Z" />
+</vector>
