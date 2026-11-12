@@ -28,8 +28,12 @@ data class RuleBundle(
  */
 @Serializable
 data class PopupRules(
-    /** 广告标识: 匹配 text 或 contentDescription */
+    /** 广告标识: 匹配 text 或 contentDescription, 且文本长度不得超过 maxMarkerTextLength */
     val adMarkers: List<String> = listOf("广告", "广告素材", "广告图片", "Sponsored", "推广"),
+    /** 广告标识的最大深度: 超过说明广告埋在列表/正文里, 而不是独立的插屏弹窗 */
+    val maxMarkerDepth: Int = 3,
+    /** 广告标识文本的最大长度: 真正的角标是短语, 长文本是正文里的「免广告」 */
+    val maxMarkerTextLength: Int = 12,
     /** 关闭控件的文本特征 */
     val closeTexts: List<String> = listOf("×", "✕", "X", "关闭", "关闭广告", "close"),
     /** 关闭控件允许的最大屏占比, 超过说明是容器而非按钮 */

@@ -14,6 +14,15 @@ data class TextNode(
     val clickable: Boolean = false,
     val editable: Boolean = false,
     val fromOcr: Boolean = false,
+    /**
+     * 节点在树中的深度（根节点为 0）。
+     *
+     * 用途: 区分「这个窗口本身就是广告」和「这个页面里嵌了一条广告」。
+     * 插屏弹窗的广告标识通常在浅层（深度 <= 3）,
+     * 而信息流列表里的广告角标埋在十几层之下 —— 两者必须区别对待,
+     * 否则会把推文正文里的「免广告」当成广告标识, 进而去点右上角的 ⋮ 菜单。实测踩过。
+     */
+    val depth: Int = 0,
 ) {
     /** 去掉首尾空白与换行后的文本, 用于匹配。 */
     val normalized: String get() = text.trim().replace('\n', ' ')

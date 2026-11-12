@@ -74,6 +74,7 @@ class NodeTreeParser(
                         viewId = viewId,
                         clickable = runCatching { node.isClickable }.getOrDefault(false),
                         editable = runCatching { node.isEditable }.getOrDefault(false),
+                        depth = depth,
                     )
                 }
             }

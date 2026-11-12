@@ -68,6 +68,9 @@ data class FlitrPrefs(
             "com.android.vending",
             "com.aios.flitr",
             "com.aios.flitr.debug",
+            // X(Twitter): 时间线里「广告/推广」字样遍布正文与角标, 且每条推文右上角都有 ⋮ 按钮,
+            // 实测会误判成「广告 + 关闭按钮」而点开菜单。该应用不在支持范围内, 直接排除。
+            "com.twitter.android",
         )
     }
 }

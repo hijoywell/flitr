@@ -32,14 +32,23 @@ class PopupAdEngine(private val rules: PopupRules) {
             return Verdict(rejected = "屏幕尺寸未知")
         }
 
-        // --- 1. 必须存在广告标识 ---
+        // --- 1. 必须存在广告标识, 且是「浅层的短角标」 ---
+        // 实测教训: 信息流里一条推文正文含「免广告」, 加上右上角的 ⋮ 按钮,
+        // 会被误判成广告并点开 ⋮ 菜单。所以标识必须是浅层的短语,
+        // 深度超过 maxMarkerDepth 说明广告埋在列表/正文里, 属于「页面含广告」而非「弹窗是广告」。
         val marker = snapshot.nodes.firstOrNull { node ->
-            node.normalized.isNotEmpty() && rules.adMarkers.any { node.normalized.contains(it) }
-        } ?: return Verdict(rejected = "未发现广告标识")
+            val text = node.normalized
+            text.isNotEmpty() &&
+                text.length <= rules.maxMarkerTextLength &&
+                node.depth <= rules.maxMarkerDepth &&
+                rules.adMarkers.any { text.contains(it) }
+        } ?: return Verdict(rejected = "未发现浅层广告标识")
 
         // --- 2. 找候选关闭控件 ---
+        val maxCloseDepth = rules.maxMarkerDepth + 1
         val candidates = snapshot.nodes.filter { node ->
             node.clickable &&
+                node.depth <= maxCloseDepth &&
                 node !== marker &&
                 snapshot.areaRatio(node.bounds) in MIN_AREA_RATIO..rules.maxCloseAreaRatio &&
                 node.normalized.length <= MAX_CLOSE_TEXT_LENGTH
