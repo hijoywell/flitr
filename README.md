@@ -40,6 +40,37 @@ Android 11+（`minSdk 30`），`targetSdk 37`（Android 17），仅 `arm64-v8a`
 
 需要 JDK 21 与 Android SDK Platform 37。
 
+### 受限环境（只允许写工作区）
+
+如果构建在启动阶段就失败：
+
+```text
+Could not initialize native services.
+> Failed to load native library 'native-platform.dll' for Windows 11 amd64.
+```
+
+不是 Gradle 或 JDK 坏了。Gradle 默认把 user home 放在 `~/.gradle`、临时文件放在
+`%TEMP%`，在只允许写工作区的环境里这两处都写不进去，于是加载原生库时失败。
+
+仓库根目录的 `build.ps1` 已经把这两处都指到 `.tooling/` 下：
+
+```powershell
+./build.ps1                              # 构建 release APK
+./build.ps1 :app:testDebugUnitTest       # 只跑单元测试
+./build.ps1 :app:assembleRelease -Clean  # 先 clean
+```
+
+手工等价写法：
+
+```powershell
+$env:GRADLE_USER_HOME = "$PWD\.tooling\gradle-home"
+$env:GRADLE_OPTS      = "-Djava.io.tmpdir=$PWD\.tooling\jtmp"
+./gradlew :app:assembleRelease
+```
+
+同样的原因还会让 `.android/analytics.settings` 写不进去，构建时打一行
+`Unable to initialize metrics` 警告——不影响产物。
+
 ## 签名
 
 正式分发用项目专用 release 密钥。密钥放在仓库内的 `.signing/` 目录，
