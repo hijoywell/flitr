@@ -42,21 +42,31 @@ Android 11+（`minSdk 30`），`targetSdk 37`（Android 17），仅 `arm64-v8a`
 
 ## 签名
 
-正式分发用项目专用 release 密钥。本地构建时在仓库根目录放 `keystore.properties`
-（已在 `.gitignore` 中，不会提交）：
+正式分发用项目专用 release 密钥。密钥放在仓库内的 `.signing/` 目录，
+该目录已列入 `.gitignore`，只存在于本机和构建服务器，不会推到 GitHub：
+
+```text
+.signing/
+├── flitr-release.jks
+└── keystore.properties
+```
 
 ```properties
-storeFile=/absolute/path/to/flitr-release.jks
+storeFile=.signing/flitr-release.jks
 storePassword=...
 keyAlias=flitr
 keyPassword=...
 ```
 
-> 路径请用正斜杠。`.properties` 里 `\` 是转义字符，Windows 的反斜杠路径会被吃掉。
+`storeFile` 用相对路径（按仓库根目录解析），同一份配置 Windows 和 Linux 通用。
+
+> `.properties` 里 `\` 是转义字符，别写 Windows 反斜杠路径。
 
 CI 从 GitHub Secrets 读取 `FLITR_KEYSTORE_BASE64` / `FLITR_KEYSTORE_PASSWORD` /
 `FLITR_KEY_ALIAS` / `FLITR_KEY_PASSWORD`。两者都没有时回退 debug 签名，
 产物仍可安装，但**不能用于分发**——debug 密钥每台机器不同，装不了更新。
+
+> ⚠️ `git clean -xdf` 会连被忽略的文件一起删掉，**包括 `.signing/`**。清理前先备份。
 
 ## 文档
 

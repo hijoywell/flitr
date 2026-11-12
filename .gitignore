@@ -13,6 +13,8 @@ captures/
 *.keystore
 *.jks
 keystore.properties
+# 签名文件目录：本机和构建服务器各留一份，绝不推送到 GitHub
+.signing/
 .tooling/
 # 工具链在仓库目录下留下的临时产物，与项目无关
 .dsh-research/

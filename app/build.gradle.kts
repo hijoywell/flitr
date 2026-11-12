@@ -18,30 +18,49 @@ val apkAbi = "arm64-v8a"
 //
 // 优先级：环境变量（CI）> keystore.properties（本地）> 回退 debug 签名
 //
+// 本地签名文件放在仓库内的 .signing/ 目录，该目录已被 .gitignore 挡住，
+// 只存在于本机，不会随 git 推到远端。
+//
 // 回退分支是为了让任何人 clone 下来都能直接 assembleRelease 出可安装的包。
 // 但 debug 密钥是 AGP 在每台机器上现生成的，每次 CI 构建都不一样，
 // 用它发布的包无法升级安装，也不能上架——所以正式分发必须走上面两条路径。
 // ---------------------------------------------------------------------------
 val keystoreProps = Properties()
-val keystorePropsFile = rootProject.file("keystore.properties")
-if (keystorePropsFile.exists()) {
-    keystorePropsFile.inputStream().use { stream -> keystoreProps.load(stream) }
-}
+val keystorePropsFile = listOf(".signing/keystore.properties", "keystore.properties")
+    .map { rootProject.file(it) }
+    .firstOrNull { it.exists() }
+keystorePropsFile?.let { file -> file.inputStream().use { stream -> keystoreProps.load(stream) } }
 
 fun signingValue(propKey: String, envKey: String): String? =
     System.getenv(envKey)?.takeIf { it.isNotBlank() }
         ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
 
+// 相对路径统一按仓库根目录解析：这样同一份 keystore.properties
+// 在 Windows 和 Linux 上都能用（绝对路径则原样返回）。
 val releaseStoreFile = signingValue("storeFile", "FLITR_KEYSTORE_FILE")
+    ?.let { rootProject.file(it) }
 val releaseStorePassword = signingValue("storePassword", "FLITR_KEYSTORE_PASSWORD")
 val releaseKeyAlias = signingValue("keyAlias", "FLITR_KEY_ALIAS")
 val releaseKeyPassword = signingValue("keyPassword", "FLITR_KEY_PASSWORD")
 
 val hasReleaseSigning = releaseStoreFile != null &&
+    releaseStoreFile.exists() &&
     releaseStorePassword != null &&
     releaseKeyAlias != null &&
-    releaseKeyPassword != null &&
-    file(releaseStoreFile).exists()
+    releaseKeyPassword != null
+
+// 签名配置存在、却解析不出可用密钥时直接报错。
+// 否则会悄悄回退 debug 签名，产出一个「看着正常、但装不了更新」的包。
+if (!hasReleaseSigning && (keystorePropsFile != null || System.getenv("FLITR_KEYSTORE_FILE") != null)) {
+    throw GradleException(
+        "签名配置存在但不可用：" +
+            "storeFile=${releaseStoreFile ?: "(缺失)"}" +
+            " exists=${releaseStoreFile?.exists() ?: false}，" +
+            "storePassword=${if (releaseStorePassword != null) "已设置" else "缺失"}，" +
+            "keyAlias=${releaseKeyAlias ?: "缺失"}，" +
+            "keyPassword=${if (releaseKeyPassword != null) "已设置" else "缺失"}"
+    )
+}
 
 android {
     namespace = "com.aios.flitr"
@@ -68,7 +87,7 @@ android {
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
-                storeFile = file(releaseStoreFile!!)
+                storeFile = releaseStoreFile!!
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
