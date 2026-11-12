@@ -4,6 +4,13 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// 版本号集中在这里, 避免 versionName 与产物文件名不一致。
+val appVersionName = "1.0.1"
+val appVersionCode = 14
+
+// 当前只打包 arm64-v8a（见 defaultConfig.ndk.abiFilters），产物文件名需要带上它。
+val apkAbi = "arm64-v8a"
+
 android {
     namespace = "com.aios.flitr"
     compileSdk = 37
@@ -12,8 +19,8 @@ android {
         applicationId = "com.aios.flitr"
         minSdk = 30
         targetSdk = 37
-        versionCode = 13
-        versionName = "1.3"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -64,6 +71,20 @@ android {
 
     lint {
         abortOnError = false
+    }
+}
+
+// 产物命名对齐常见开源项目的分发规范: Flitr-<版本>-android-<abi>.apk
+// 默认的 app-release.apk 从文件名看不出是哪个版本、哪个架构, 下载下来容易混淆。
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType == "release") {
+            variant.outputs.forEach { output ->
+                (output as? com.android.build.api.variant.impl.VariantOutputImpl)
+                    ?.outputFileName
+                    ?.set("Flitr-$appVersionName-android-$apkAbi.apk")
+            }
+        }
     }
 }
 

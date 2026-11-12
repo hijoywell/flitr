@@ -55,7 +55,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: flitr-release-apk
+          name: Flitr-${{ github.ref_name }}-apk
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
@@ -75,7 +75,12 @@ jobs:
         run: |
           set -e
           APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
-          echo "发布: ${GITHUB_REF_NAME}  产物: $APK ($(du -h "$APK" | cut -f1))"
+          NAME=$(basename "$APK")
+          case "$NAME" in
+            Flitr-*) ;;
+            *) echo "::error::产物命名不符合规范（应为 Flitr-<版本>-android-<abi>.apk）: $NAME"; exit 1 ;;
+          esac
+          echo "发布: ${GITHUB_REF_NAME}  产物: $NAME ($(du -h "$APK" | cut -f1))"
           gh release create "${GITHUB_REF_NAME}" "$APK" \
             --title "Flitr ${GITHUB_REF_NAME}" \
             --notes-file .github/release-notes.md

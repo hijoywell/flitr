@@ -21,15 +21,22 @@
 - **免悬浮窗权限** —— 状态胶囊基于无障碍 Overlay
 - **Material 3 界面** —— 3 种明暗模式 × 6 套强调色
 
+## 下载
+
+到 [Releases](https://github.com/hijoywell/flitr/releases) 取最新的
+`Flitr-<版本>-android-arm64-v8a.apk`，直接安装（仅 arm64 设备）。
+
 ## 环境
 
-Android 11+（`minSdk 30`），`targetSdk 37`（Android 17）
+Android 11+（`minSdk 30`），`targetSdk 37`（Android 17），仅 `arm64-v8a`
 
 ## 构建
 
 ```bash
 ./gradlew :app:assembleRelease
 ```
+
+产物：`app/build/outputs/apk/release/Flitr-<版本>-android-arm64-v8a.apk`
 
 需要 JDK 21 与 Android SDK Platform 37。
 
