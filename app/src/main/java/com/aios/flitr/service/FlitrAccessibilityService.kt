@@ -296,6 +296,8 @@ class FlitrAccessibilityService : AccessibilityService() {
             ?: return skip("no package")
 
         if (pkg in prefs.whitelist) return skip("whitelisted: $pkg")
+        // 插屏通道按包名 opt-in —— 「广告」两个字在任意 App 里都可能出现
+        if (pkg !in prefs.popupPackages) return skip("not in popupPackages: $pkg")
         // 视频托管应用由状态机处理, 这里不重复介入
         if (prefs.videoEnabled && pkg in prefs.videoPackages) return skip("video app: $pkg")
 

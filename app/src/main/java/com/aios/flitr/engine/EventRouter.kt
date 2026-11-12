@@ -81,10 +81,17 @@ class EventRouter(
         if (pkg in prefs.whitelist) return Route.Ignore
 
         // --- 插屏通道: 窗口变化时优先 ---
+        // 必须按包名 opt-in: 「广告」两个字在任意 App 里都可能出现 ——
+        // 通话记录的骚扰标记叫「广告推销」, 正文里会有「免广告」。
+        // 不做包名白名单的话, 拨号盘那种误点风险无法收敛。实测踩过。
+        //
         // 弹窗出现几乎必然伴随一次窗口事件, 而开屏广告在 6 秒窗口内有大量内容变化事件可用,
         // 所以窗口变化这一次让给插屏不会拖慢开屏判定。
-        // 早期把插屏排在开屏后面, 结果插屏永远轮不到 —— 实测踩过。
-        if (prefs.popupEnabled && windowChanged && now - lastPopupCheckAt >= POPUP_SAMPLE_MS) {
+        // 早期把插屏排在开屏后面, 结果插屏永远轮不到 —— 也实测踩过。
+        if (prefs.popupEnabled &&
+            pkg in prefs.popupPackages &&
+            now - lastPopupCheckAt >= POPUP_SAMPLE_MS
+        ) {
             lastPopupCheckAt = now
             return Route.Popup
         }
@@ -114,7 +121,10 @@ class EventRouter(
         // --- 插屏兜底 ---
         // 有些弹窗不产生窗口事件（例如在同一次内容刷新里绘制出来的浮层）,
         // 因此保留一个低频轮询, 每 POPUP_FALLBACK_MS 扫一次。
-        if (prefs.popupEnabled && now - lastPopupCheckAt >= POPUP_FALLBACK_MS) {
+        if (prefs.popupEnabled &&
+            pkg in prefs.popupPackages &&
+            now - lastPopupCheckAt >= POPUP_FALLBACK_MS
+        ) {
             lastPopupCheckAt = now
             return Route.Popup
         }

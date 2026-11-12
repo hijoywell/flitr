@@ -32,6 +32,15 @@ data class FlitrPrefs(
     val whitelist: Set<String> = DEFAULT_WHITELIST,
     val videoPackages: Set<String> = setOf("com.phoenix.read"),
 
+    /**
+     * 插屏弹窗通道只在这几个应用里生效。
+     *
+     * 必须按包名 opt-in: 「广告」两个字在任意 App 里都可能出现（通话记录的骚扰标记、
+     * 正文里的「免广告」、自己 App 的活动弹窗）, 不做包名白名单的话误点风险无法收敛。
+     * 默认为空 —— 这个功能宁可默认不做, 也不能误点。
+     */
+    val popupPackages: Set<String> = DEFAULT_POPUP_PACKAGES,
+
     // 拟人化参数
     val reactionMinMs: Int = 380,
     val reactionMaxMs: Int = 820,
@@ -48,6 +57,19 @@ data class FlitrPrefs(
     val persistentNotification: Boolean = true,
 ) {
     companion object {
+        /**
+         * 插屏弹窗通道默认只在已验证的应用上生效。
+         *
+         * 为什么必须按包名 opt-in: 「广告」两个字在任意 App 里都可能出现 ——
+         * 通话记录的骚扰标记叫「广告推销」, 正文里会有「免广告」,
+         * 自己 App 的活动弹窗更没有标识。不做包名白名单, 误点风险无法收敛。
+         * 新增应用前必须先抓真实样本确认节点结构。
+         */
+        val DEFAULT_POPUP_PACKAGES: Set<String> = setOf(
+            "com.taou.maimai",      // 脉脉 · 同事圈 (真机样本已验证)
+            "ctrip.android.view",   // 携程 (真机样本已验证)
+        )
+
         /** 默认完全不介入的应用: 系统界面、桌面、电话、支付收银台 */
         val DEFAULT_WHITELIST: Set<String> = setOf(
             "com.android.systemui",
@@ -68,6 +90,11 @@ data class FlitrPrefs(
             "com.android.vending",
             "com.aios.flitr",
             "com.aios.flitr.debug",
+            // 拨号/联系人: ColorOS 的拨号盘就是 com.android.contacts,
+            // 通话记录里有「广告推销」「骚扰电话」这类标记, 与广告角标仅一字之差, 极易误判
+            "com.android.contacts",
+            "com.android.contactspicker",
+            "com.android.providers.contacts",
             // X(Twitter): 时间线里「广告/推广」字样遍布正文与角标, 且每条推文右上角都有 ⋮ 按钮,
             // 实测会误判成「广告 + 关闭按钮」而点开菜单。该应用不在支持范围内, 直接排除。
             "com.twitter.android",
@@ -87,6 +114,7 @@ class SettingsRepository(private val context: Context) {
             splashEnabled = p[K_SPLASH] ?: true,
             videoEnabled = p[K_VIDEO] ?: true,
             popupEnabled = p[K_POPUP] ?: true,
+            popupPackages = p[K_POPUP_PKGS] ?: FlitrPrefs.DEFAULT_POPUP_PACKAGES,
             paused = p[K_PAUSED] ?: false,
             whitelist = p[K_WHITELIST] ?: FlitrPrefs.DEFAULT_WHITELIST,
             videoPackages = p[K_VIDEO_PKGS] ?: setOf("com.phoenix.read"),
@@ -113,6 +141,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setPaused(v: Boolean) = put { it[K_PAUSED] = v }
     suspend fun setWhitelist(v: Set<String>) = put { it[K_WHITELIST] = v }
     suspend fun setVideoPackages(v: Set<String>) = put { it[K_VIDEO_PKGS] = v }
+    suspend fun setPopupPackages(v: Set<String>) = put { it[K_POPUP_PKGS] = v }
     suspend fun setReactionRange(min: Int, max: Int) = put {
         it[K_REACT_MIN] = min
         it[K_REACT_MAX] = max
@@ -143,6 +172,7 @@ class SettingsRepository(private val context: Context) {
         val K_PAUSED = booleanPreferencesKey("paused")
         val K_WHITELIST = stringSetPreferencesKey("whitelist")
         val K_VIDEO_PKGS = stringSetPreferencesKey("video_packages")
+        val K_POPUP_PKGS = stringSetPreferencesKey("popup_packages")
         val K_REACT_MIN = intPreferencesKey("reaction_min")
         val K_REACT_MAX = intPreferencesKey("reaction_max")
         val K_SWIPE_MIN = intPreferencesKey("swipe_min")
