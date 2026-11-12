@@ -25,6 +25,7 @@ data class FlitrPrefs(
     // 引擎开关
     val splashEnabled: Boolean = true,
     val videoEnabled: Boolean = true,
+    val popupEnabled: Boolean = true,
     val paused: Boolean = false,
 
     // 白名单 / 托管应用
@@ -82,6 +83,7 @@ class SettingsRepository(private val context: Context) {
             followSystemDark = p[K_FOLLOW_SYSTEM] ?: true,
             splashEnabled = p[K_SPLASH] ?: true,
             videoEnabled = p[K_VIDEO] ?: true,
+            popupEnabled = p[K_POPUP] ?: true,
             paused = p[K_PAUSED] ?: false,
             whitelist = p[K_WHITELIST] ?: FlitrPrefs.DEFAULT_WHITELIST,
             videoPackages = p[K_VIDEO_PKGS] ?: setOf("com.phoenix.read"),
@@ -104,6 +106,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setFollowSystemDark(v: Boolean) = put { it[K_FOLLOW_SYSTEM] = v }
     suspend fun setSplashEnabled(v: Boolean) = put { it[K_SPLASH] = v }
     suspend fun setVideoEnabled(v: Boolean) = put { it[K_VIDEO] = v }
+    suspend fun setPopupEnabled(v: Boolean) = put { it[K_POPUP] = v }
     suspend fun setPaused(v: Boolean) = put { it[K_PAUSED] = v }
     suspend fun setWhitelist(v: Set<String>) = put { it[K_WHITELIST] = v }
     suspend fun setVideoPackages(v: Set<String>) = put { it[K_VIDEO_PKGS] = v }
@@ -133,6 +136,7 @@ class SettingsRepository(private val context: Context) {
         val K_FOLLOW_SYSTEM = booleanPreferencesKey("follow_system_dark")
         val K_SPLASH = booleanPreferencesKey("splash_enabled")
         val K_VIDEO = booleanPreferencesKey("video_enabled")
+        val K_POPUP = booleanPreferencesKey("popup_enabled")
         val K_PAUSED = booleanPreferencesKey("paused")
         val K_WHITELIST = stringSetPreferencesKey("whitelist")
         val K_VIDEO_PKGS = stringSetPreferencesKey("video_packages")

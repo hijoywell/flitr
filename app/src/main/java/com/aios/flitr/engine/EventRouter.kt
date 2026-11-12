@@ -11,6 +11,9 @@ sealed interface Route {
     /** 视频流托管通道 */
     data object Video : Route
 
+    /** 插屏 / 浮层广告通道 */
+    data object Popup : Route
+
     /** 不介入 */
     data object Ignore : Route
 }
@@ -31,6 +34,7 @@ class EventRouter(
     private var enteredAt: Long = 0L
     private var lastSplashCheckAt: Long = 0L
     private var lastVideoSampleAt: Long = 0L
+    private var lastPopupCheckAt: Long = 0L
     private var splashWindowClosed: Boolean = false
 
     /** 系统级噪声包名: 输入法、状态栏、系统弹窗 */
@@ -61,6 +65,7 @@ class EventRouter(
         splashWindowClosed = false
         lastSplashCheckAt = 0L
         lastVideoSampleAt = 0L
+        lastPopupCheckAt = 0L
         return true
     }
 
@@ -69,17 +74,22 @@ class EventRouter(
         splashWindowClosed = true
     }
 
-    fun route(pkg: String?, now: Long, prefs: FlitrPrefs): Route {
+    fun route(pkg: String?, now: Long, prefs: FlitrPrefs, windowChanged: Boolean = false): Route {
         if (prefs.paused) return Route.Ignore
         if (pkg.isNullOrBlank()) return Route.Ignore
         if (pkg in noisePackages) return Route.Ignore
         if (pkg in prefs.whitelist) return Route.Ignore
 
-        // --- 开屏通道优先 ---
-        // 顺序很关键: 开屏窗口只有 6 秒, 而视频托管是常驻的。
-        // 早期实现把视频通道放在前面, 结果凡是配置了视频托管的应用(红果/快手)
-        // 都永远轮不到开屏检测 —— 等于这些 App 的开屏广告完全没处理。
-        // 这里不 return, 让节流期内的事件继续落到视频通道, 两条通道共存。
+        // --- 插屏通道: 窗口变化时优先 ---
+        // 弹窗出现几乎必然伴随一次窗口事件, 而开屏广告在 6 秒窗口内有大量内容变化事件可用,
+        // 所以窗口变化这一次让给插屏不会拖慢开屏判定。
+        // 早期把插屏排在开屏后面, 结果插屏永远轮不到 —— 实测踩过。
+        if (prefs.popupEnabled && windowChanged && now - lastPopupCheckAt >= POPUP_SAMPLE_MS) {
+            lastPopupCheckAt = now
+            return Route.Popup
+        }
+
+        // --- 开屏通道 ---
         if (prefs.splashEnabled && !splashWindowClosed) {
             val elapsed = now - enteredAt
             if (elapsed in 0..splashRules.detectionWindowMs) {
@@ -101,6 +111,14 @@ class EventRouter(
             return Route.Ignore
         }
 
+        // --- 插屏兜底 ---
+        // 有些弹窗不产生窗口事件（例如在同一次内容刷新里绘制出来的浮层）,
+        // 因此保留一个低频轮询, 每 POPUP_FALLBACK_MS 扫一次。
+        if (prefs.popupEnabled && now - lastPopupCheckAt >= POPUP_FALLBACK_MS) {
+            lastPopupCheckAt = now
+            return Route.Popup
+        }
+
         return Route.Ignore
     }
 
@@ -115,5 +133,11 @@ class EventRouter(
     companion object {
         /** 视频通道采样间隔: 兼顾倒计时可读性与节点遍历开销 */
         const val VIDEO_SAMPLE_MS = 400L
+
+        /** 插屏通道采样间隔: 窗口变化时触发 */
+        const val POPUP_SAMPLE_MS = 350L
+
+        /** 插屏兜底轮询间隔: 覆盖不产生窗口事件的弹窗 */
+        const val POPUP_FALLBACK_MS = 3000L
     }
 }

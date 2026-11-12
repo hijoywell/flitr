@@ -82,6 +82,7 @@ class FlitrViewModel : ViewModel() {
     fun setFollowSystemDark(v: Boolean) = launch { settings.setFollowSystemDark(v) }
     fun setSplashEnabled(v: Boolean) = launch { settings.setSplashEnabled(v) }
     fun setVideoEnabled(v: Boolean) = launch { settings.setVideoEnabled(v) }
+    fun setPopupEnabled(v: Boolean) = launch { settings.setPopupEnabled(v) }
     fun setPaused(v: Boolean) = launch { settings.setPaused(v) }
     fun setPillEnabled(v: Boolean) = launch { settings.setPillEnabled(v) }
     fun setOcrEnabled(v: Boolean) = launch { settings.setOcrEnabled(v) }

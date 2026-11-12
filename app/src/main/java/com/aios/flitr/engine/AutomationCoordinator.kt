@@ -7,6 +7,7 @@ import com.aios.flitr.data.prefs.FlitrPrefs
 import com.aios.flitr.di.ServiceLocator
 import com.aios.flitr.engine.gesture.HumanGestureDispatcher
 import com.aios.flitr.engine.model.ScreenSnapshot
+import com.aios.flitr.engine.popup.PopupAdEngine
 import com.aios.flitr.engine.splash.SplashSkipEngine
 import com.aios.flitr.engine.video.ActionType
 import com.aios.flitr.engine.video.AdAssessment
@@ -30,6 +31,7 @@ import java.util.UUID
 class AutomationCoordinator(
     private val gesture: HumanGestureDispatcher,
     private val splashEngine: SplashSkipEngine,
+    private val popupEngine: PopupAdEngine,
     private val logs: LogRepository,
     private val scope: CoroutineScope,
     private val prefsProvider: () -> FlitrPrefs,
@@ -39,6 +41,11 @@ class AutomationCoordinator(
 ) {
 
     private val machines = HashMap<String, VideoAdStateMachine>()
+
+    /** 插屏关闭的冷却, 防止同一页面被反复点击 */
+    private var lastPopupFingerprint: String? = null
+    private var lastPopupClickAt: Long = 0L
+    private var lastPopupLogFingerprint: String? = null
 
     /** 开屏通道: 命中即点, 命中后关闭时间窗。 */
     fun handleSplash(snapshot: ScreenSnapshot, elapsedMs: Long, appName: String): Boolean {
@@ -151,6 +158,43 @@ class AutomationCoordinator(
         }
     }
 
+    /** 插屏 / 浮层广告通道: 命中则点关闭。 */
+    fun handlePopup(snapshot: ScreenSnapshot, appName: String, now: Long) {
+        val fingerprint = snapshot.fingerprint()
+
+        // 同一页面在冷却期内不重复点击, 避免"点了没关掉"导致连点
+        if (fingerprint == lastPopupFingerprint && now - lastPopupClickAt < POPUP_COOLDOWN_MS) {
+            return
+        }
+
+        val verdict = popupEngine.evaluate(snapshot)
+        val target = verdict.closeTarget
+        if (target == null) {
+            // 定时扫描会高频调用, 拒绝日志按页面去重, 避免刷屏
+            verdict.rejected?.let {
+                if (fingerprint != lastPopupLogFingerprint) {
+                    lastPopupLogFingerprint = fingerprint
+                    EngineLog.d("POPUP rejected: $it")
+                }
+            }
+            return
+        }
+
+        EngineLog.d("POPUP hit ${verdict.reason}")
+        lastPopupFingerprint = fingerprint
+        lastPopupClickAt = now
+
+        val tap = gesture.buildMicroTap(target.bounds.centerX, target.bounds.centerY, MICRO_TAP_RADIUS_PX)
+        gesture.performTap(tap)
+        record(
+            snapshot = snapshot,
+            appName = appName,
+            kind = LogKind.PopupClose,
+            summary = verdict.reason,
+            detail = "关闭控件位于 (${target.bounds.centerX},${target.bounds.centerY})",
+        )
+    }
+
     /** 节点摘要: 只取可见文本的前若干个, 足够判断页面性质。 */
     private fun summarize(snapshot: ScreenSnapshot, assessment: AdAssessment?): String {
         val texts = snapshot.nodes.asSequence()
@@ -258,5 +302,8 @@ class AutomationCoordinator(
     companion object {
         /** 节点中心附近的可点击半径, 避免每次都打在几何中心 */
         const val MICRO_TAP_RADIUS_PX = 6
+
+        /** 同一页面重复关闭的冷却 */
+        const val POPUP_COOLDOWN_MS = 2500L
     }
 }

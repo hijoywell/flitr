@@ -14,6 +14,32 @@ data class RuleBundle(
     val schemaVersion: Int = 1,
     val videoScenarios: List<VideoScenarioRule> = emptyList(),
     val splashRules: SplashRules = SplashRules(),
+    val popupRules: PopupRules = PopupRules(),
+)
+
+/**
+ * 插屏 / 浮层广告的关闭规则。
+ *
+ * 与开屏的最大区别: 插屏的关闭按钮通常是个没有文字的 `×` 图标,
+ * 而「找 × 就点」非常危险 —— 正常对话框、内容浮层也用 ×。
+ * 因此判定必须**同时**满足两个条件:
+ *   1. 页面上存在广告标识（如 `广告素材`、`广告` 角标）
+ *   2. 存在一个尺寸很小、位于右上角、可点击的关闭控件
+ */
+@Serializable
+data class PopupRules(
+    /** 广告标识: 匹配 text 或 contentDescription */
+    val adMarkers: List<String> = listOf("广告", "广告素材", "广告图片", "Sponsored", "推广"),
+    /** 关闭控件的文本特征 */
+    val closeTexts: List<String> = listOf("×", "✕", "X", "关闭", "关闭广告", "close"),
+    /** 关闭控件允许的最大屏占比, 超过说明是容器而非按钮 */
+    val maxCloseAreaRatio: Float = 0.03f,
+    /** 关闭控件中心点必须位于画布的这个横向比例之外（即右侧） */
+    val minCloseCenterXRatio: Float = 0.55f,
+    /** 关闭控件中心点必须位于画布的这个纵向比例之内（即上部） */
+    val maxCloseCenterYRatio: Float = 0.50f,
+    /** 点击后多久内不再对同一页面重复点击 */
+    val cooldownMs: Long = 2500L,
 )
 
 @Serializable

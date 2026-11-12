@@ -191,6 +191,20 @@ fun SettingsScreen(vm: FlitrViewModel) {
             SectionHeader(title = "行为开关", icon = "🎛")
             VSpace(8)
             ToggleRow(
+                title = "开屏广告秒跳",
+                desc = "切入应用后 6 秒内匹配「跳过」按钮",
+                checked = prefs.splashEnabled,
+                onChange = { vm.setSplashEnabled(it) },
+            )
+            HairlineDivider()
+            ToggleRow(
+                title = "弹窗广告自动关闭",
+                desc = "识别「广告」标识 + 右上角关闭按钮, 仅对插屏弹窗生效",
+                checked = prefs.popupEnabled,
+                onChange = { vm.setPopupEnabled(it) },
+            )
+            HairlineDivider()
+            ToggleRow(
                 title = "中途弹窗自动续播",
                 desc = "自动点击「继续观看 / 开心收下」",
                 checked = prefs.autoContinueWatching,

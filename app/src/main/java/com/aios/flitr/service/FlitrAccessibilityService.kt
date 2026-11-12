@@ -55,6 +55,7 @@ class FlitrAccessibilityService : AccessibilityService() {
     private lateinit var pill: OverlayPillController
     private lateinit var touchWatcher: TouchOutsideWatcher
     private lateinit var splashEngine: SplashSkipEngine
+    private lateinit var popupEngine: com.aios.flitr.engine.popup.PopupAdEngine
     private lateinit var ocr: SilentRoiOcrParser
 
     private var prefs: FlitrPrefs = FlitrPrefs()
@@ -76,6 +77,7 @@ class FlitrAccessibilityService : AccessibilityService() {
         FlitrRuntime.setServiceConnected(true)
         updateNotification()
         applyOverlays()
+        startPopupScanner()
     }
 
     private fun measureScreen() {
@@ -102,11 +104,13 @@ class FlitrAccessibilityService : AccessibilityService() {
 
         splashRules = ServiceLocator.rules.bundle.value.splashRules
         splashEngine = SplashSkipEngine(splashRules)
+        popupEngine = com.aios.flitr.engine.popup.PopupAdEngine(ServiceLocator.rules.bundle.value.popupRules)
         router = EventRouter(splashRules)
 
         coordinator = AutomationCoordinator(
             gesture = gesture,
             splashEngine = splashEngine,
+            popupEngine = popupEngine,
             logs = ServiceLocator.logs,
             scope = scope,
             prefsProvider = { prefs },
@@ -154,6 +158,7 @@ class FlitrAccessibilityService : AccessibilityService() {
             .onEach {
                 splashRules = it.splashRules
                 splashEngine = SplashSkipEngine(splashRules)
+                popupEngine = com.aios.flitr.engine.popup.PopupAdEngine(it.popupRules)
                 rebuildRuleCache()
             }
             .launchIn(scope)
@@ -223,13 +228,111 @@ class FlitrAccessibilityService : AccessibilityService() {
         FlitrRuntime.setForeground(pkg, ServiceLocator.appLabel(pkg))
         FlitrRuntime.markEvent(System.currentTimeMillis())
 
-        val route = router.route(pkg, now, prefs)
+        val route = router.route(pkg, now, prefs, e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)
         logRoute(pkg, route, now)
         when (route) {
             is Route.Splash -> handleSplash(pkg, e.className?.toString(), route.elapsedMs, now)
             Route.Video -> handleVideo(pkg, e.className?.toString(), now)
+            Route.Popup -> {
+                handlePopup(pkg, e.className?.toString(), now)
+                // 弹窗内容常常比窗口事件晚几百毫秒才渲染出来, 补一次检查
+                schedulePopupRecheck(POPUP_RECHECK_MS)
+            }
             Route.Ignore -> Unit
         }
+    }
+
+    /**
+     * 插屏广告定时扫描。
+     *
+     * 为什么必须定时: 静态插屏（一张图片 + 一个 × ）在显示之后**不产生任何无障碍事件**,
+     * 纯事件驱动的通道永远等不到它。实测脉脉的京东广告弹窗就是这样 —— 挂在屏幕上几分钟,
+     * 引擎一条日志都没有。
+     *
+     * 代价控制: 间隔 2.5 秒、屏幕熄灭时跳过、白名单与视频托管应用跳过。
+     * 相比视频通道的 400ms, 这个开销可以接受。
+     */
+    private val popupScanTask = object : Runnable {
+        override fun run() {
+            // runCatching 会把异常静默吞掉, 这里显式打出来, 否则"扫描器没反应"无法排查
+            runCatching { scanPopupOnce() }
+                .onFailure { EngineLog.w("POPUP scan failed: ${it.javaClass.simpleName} ${it.message}") }
+            handler.postDelayed(this, POPUP_SCAN_INTERVAL_MS)
+        }
+    }
+
+    private fun startPopupScanner() {
+        handler.removeCallbacks(popupScanTask)
+        handler.postDelayed(popupScanTask, POPUP_SCAN_INTERVAL_MS)
+        EngineLog.d("POPUP scanner started, interval=${POPUP_SCAN_INTERVAL_MS}ms")
+    }
+
+    private fun stopPopupScanner() {
+        handler.removeCallbacks(popupScanTask)
+    }
+
+    private var lastScanLogAt: Long = 0L
+
+    private fun scanPopupOnce() {
+        val now = SystemClock.uptimeMillis()
+        fun skip(reason: String) {
+            if (now - lastScanLogAt > 10_000) {
+                lastScanLogAt = now
+                EngineLog.d("POPUP scan skip: $reason")
+            }
+        }
+
+        if (!prefs.popupEnabled) return skip("popupEnabled=false")
+        if (prefs.paused) return skip("paused")
+        if (!isInteractiveNow()) return skip("not interactive")
+
+        val root = acquireRoot() ?: return skip("no root")
+
+        // 包名从节点树自己读, 不用 router.foregroundPackage。
+        // 后者只由无障碍事件写入, 而静态弹窗不产生任何事件 —— 服务重启后它一直是 null,
+        // 扫描器会把自己挡在 "no foreground package" 这一步。实测踩过。
+        val pkg = root.packageName?.toString()?.takeIf { it.isNotBlank() }
+            ?: router.foregroundPackage
+            ?: return skip("no package")
+
+        if (pkg in prefs.whitelist) return skip("whitelisted: $pkg")
+        // 视频托管应用由状态机处理, 这里不重复介入
+        if (prefs.videoEnabled && pkg in prefs.videoPackages) return skip("video app: $pkg")
+
+        val snapshot = buildSnapshot(root, pkg, null, now)
+        if (now - lastScanLogAt > 10_000) {
+            lastScanLogAt = now
+            EngineLog.d("POPUP scan pkg=$pkg nodes=${snapshot.nodes.size}")
+        }
+        coordinator.handlePopup(snapshot, ServiceLocator.appLabel(pkg), now)
+    }
+
+    private fun handlePopup(pkg: String, className: String?, now: Long) {
+        val root = acquireRoot()
+        if (root == null) {
+            logNoRoot()
+            return
+        }
+        val snapshot = buildSnapshot(root, pkg, className, now)
+        coordinator.handlePopup(snapshot, ServiceLocator.appLabel(pkg), now)
+    }
+
+    private var pendingPopupRecheck: Runnable? = null
+
+    private fun schedulePopupRecheck(delayMs: Long) {
+        pendingPopupRecheck?.let { handler.removeCallbacks(it) }
+        val runnable = Runnable { recheckPopup() }
+        pendingPopupRecheck = runnable
+        handler.postDelayed(runnable, delayMs)
+    }
+
+    private fun recheckPopup() {
+        val pkg = router.foregroundPackage ?: return
+        if (!prefs.popupEnabled) return
+        val root = acquireRoot() ?: return
+        val now = SystemClock.uptimeMillis()
+        val snapshot = buildSnapshot(root, pkg, null, now)
+        coordinator.handlePopup(snapshot, ServiceLocator.appLabel(pkg), now)
     }
 
     private var lastRouteLogAt = 0L
@@ -242,6 +345,7 @@ class FlitrAccessibilityService : AccessibilityService() {
         val routeName = when (route) {
             is Route.Splash -> "Splash"
             Route.Video -> "Video"
+            Route.Popup -> "Popup"
             Route.Ignore -> "Ignore"
         }
         val key = "$pkg|$routeName"
@@ -406,6 +510,7 @@ class FlitrAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopPopupScanner()
         pendingRecheck?.let { handler.removeCallbacks(it) }
         runCatching { touchWatcher.stop() }
         runCatching { pill.hide() }
@@ -452,5 +557,11 @@ class FlitrAccessibilityService : AccessibilityService() {
 
         /** 同一页面重复 OCR 的最小间隔 */
         const val OCR_REPEAT_MS = 3000L
+
+        /** 窗口变化后补查插屏广告的延迟 */
+        const val POPUP_RECHECK_MS = 600L
+
+        /** 插屏定时扫描间隔: 覆盖不产生无障碍事件的静态弹窗 */
+        const val POPUP_SCAN_INTERVAL_MS = 2500L
     }
 }

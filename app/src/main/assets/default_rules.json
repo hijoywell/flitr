@@ -17,6 +17,14 @@
     "detectionWindowMs": 6000,
     "throttleMs": 120
   },
+  "popupRules": {
+    "adMarkers": ["广告", "广告素材", "广告图片", "Sponsored", "推广"],
+    "closeTexts": ["×", "✕", "X", "关闭", "关闭广告", "close"],
+    "maxCloseAreaRatio": 0.03,
+    "minCloseCenterXRatio": 0.55,
+    "maxCloseCenterYRatio": 0.5,
+    "cooldownMs": 2500
+  },
   "videoScenarios": [
     {
       "packageName": "com.phoenix.read",

@@ -44,6 +44,7 @@ private enum class LogFilter(val label: String) {
     All("全部"),
     Video("短剧智划"),
     Splash("开屏跳过"),
+    Popup("弹窗关闭"),
 }
 
 @Composable
@@ -57,6 +58,7 @@ fun LogsScreen(vm: FlitrViewModel) {
             LogFilter.All -> entries
             LogFilter.Video -> entries.filter { it.kindEnum in VIDEO_KINDS }
             LogFilter.Splash -> entries.filter { it.kindEnum == LogKind.SplashSkip }
+            LogFilter.Popup -> entries.filter { it.kindEnum == LogKind.PopupClose }
         }
     }
 
@@ -127,6 +129,7 @@ private fun LogRow(entry: ActionLog, onMarkFalsePositive: () -> Unit) {
     val kind = entry.kindEnum
     val accent = when (kind) {
         LogKind.SplashSkip -> tokens.primary
+        LogKind.PopupClose -> tokens.primary
         LogKind.VideoNoCountdownSwipe -> tokens.primary
         LogKind.VideoCountdownSwipe -> tokens.warn
         LogKind.VideoClose -> tokens.warn

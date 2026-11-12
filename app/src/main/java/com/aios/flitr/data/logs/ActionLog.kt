@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 /** 触发类型。对应 UI 上的动作标签 Chip。 */
 enum class LogKind(val label: String) {
     SplashSkip("开屏跳过"),
+    PopupClose("关闭弹窗广告"),
     VideoNoCountdownSwipe("无倒计时秒划"),
     VideoCountdownSwipe("等倒计时后划走"),
     VideoClose("关闭广告弹窗"),
