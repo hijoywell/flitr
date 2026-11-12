@@ -46,11 +46,49 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/*.gradle.kts') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # 签名密钥不进仓库，从 Secrets 还原。
+      # 没配 secrets（例如 fork、PR）时回退 debug 签名，构建仍然能跑通。
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FLITR_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.FLITR_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.FLITR_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.FLITR_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::未配置签名 secrets，本次构建回退 debug 签名，产物不可用于升级安装"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flitr-release.jks"
+          {
+            echo "FLITR_KEYSTORE_FILE=$RUNNER_TEMP/flitr-release.jks"
+            echo "FLITR_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "FLITR_KEY_ALIAS=$KEY_ALIAS"
+            echo "FLITR_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "已从 Secrets 还原签名密钥"
+
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
 
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --no-daemon --console=plain
+
+      # 配了密钥却还是 debug 签名，说明 secrets 没生效，必须让构建失败而不是发个坏包出去
+      - name: Verify signature
+        run: |
+          set -e
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$APK" | tee /tmp/certs.txt
+          if [ -n "$FLITR_KEYSTORE_FILE" ]; then
+            if grep -q "CN=Android Debug" /tmp/certs.txt; then
+              echo "::error::已配置签名 secrets，但产物仍是 debug 签名"
+              exit 1
+            fi
+            echo "签名校验通过：使用 release 密钥"
+          else
+            echo "::warning::本次产物为 debug 签名，仅供自测"
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

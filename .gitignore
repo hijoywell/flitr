@@ -12,4 +12,8 @@ captures/
 *.aab
 *.keystore
 *.jks
+keystore.properties
 .tooling/
+# 工具链在仓库目录下留下的临时产物，与项目无关
+.dsh-research/
+dsh-media-studio/

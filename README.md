@@ -40,6 +40,24 @@ Android 11+（`minSdk 30`），`targetSdk 37`（Android 17），仅 `arm64-v8a`
 
 需要 JDK 21 与 Android SDK Platform 37。
 
+## 签名
+
+正式分发用项目专用 release 密钥。本地构建时在仓库根目录放 `keystore.properties`
+（已在 `.gitignore` 中，不会提交）：
+
+```properties
+storeFile=/absolute/path/to/flitr-release.jks
+storePassword=...
+keyAlias=flitr
+keyPassword=...
+```
+
+> 路径请用正斜杠。`.properties` 里 `\` 是转义字符，Windows 的反斜杠路径会被吃掉。
+
+CI 从 GitHub Secrets 读取 `FLITR_KEYSTORE_BASE64` / `FLITR_KEYSTORE_PASSWORD` /
+`FLITR_KEY_ALIAS` / `FLITR_KEY_PASSWORD`。两者都没有时回退 debug 签名，
+产物仍可安装，但**不能用于分发**——debug 密钥每台机器不同，装不了更新。
+
 ## 文档
 
 - [产品需求](docs/PRD.md)

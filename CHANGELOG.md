@@ -5,6 +5,48 @@
 
 ---
 
+## 1.0.2 — 2026-11-12
+
+### 改用专用 release 密钥签名
+
+1.0.1 发布后发现一个问题：本地构建和 GitHub 上构建的 APK **签名不一样**。
+
+```text
+本地     V2 Signer SHA-256: 76defc7d5e588bf96c58a0ec7b771295...
+GitHub   V2 Signer SHA-256: 7305e38d2ea15793b1554843014e2d85...
+```
+
+**根因**
+
+`release` 构建类型挂的是 `signingConfigs.getByName("debug")`。debug keystore 由 AGP
+在每台机器上现生成，GitHub 的 runner 是一次性的，于是每次 CI 构建都拿到一个新密钥：
+
+```text
+v1.0   那次 CI  →  密钥 A
+v1.0.1 这次 CI  →  密钥 B
+下次 v1.0.2     →  密钥 C   ← 装不上
+```
+
+后果是用户装新版本会 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，只能卸载重装、数据全丢；
+而且 debug 密钥的密码是公开的 `android`，谁都能签一个包冒充。
+
+**修法**
+
+生成专用 release keystore（RSA 4096，有效期 30 年），密钥不进仓库：
+
+| 来源 | 用途 |
+|---|---|
+| `FLITR_*` 环境变量 | CI，从 GitHub Secrets 还原 |
+| `keystore.properties` | 本地构建 |
+| 都没有 → 回退 debug 签名 | 保证任何人 clone 下来都能出可安装的包 |
+
+CI 里加了签名校验：配了 secrets 却仍产出 debug 签名，直接让构建失败。
+
+**注意**：1.0.1 是 debug 密钥签的，装过它的设备**无法覆盖升级**到 1.0.2，需要先卸载。
+好在 1.0.1 的下载量是 0，实际没有用户受影响。
+
+---
+
 ## 1.0.1 — 2026-11-12
 
 ### 发布规范化：APK 命名 + 版本号对齐

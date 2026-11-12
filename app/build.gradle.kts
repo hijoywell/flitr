@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -5,11 +7,41 @@ plugins {
 }
 
 // 版本号集中在这里, 避免 versionName 与产物文件名不一致。
-val appVersionName = "1.0.1"
-val appVersionCode = 14
+val appVersionName = "1.0.2"
+val appVersionCode = 15
 
 // 当前只打包 arm64-v8a（见 defaultConfig.ndk.abiFilters），产物文件名需要带上它。
 val apkAbi = "arm64-v8a"
+
+// ---------------------------------------------------------------------------
+// release 签名
+//
+// 优先级：环境变量（CI）> keystore.properties（本地）> 回退 debug 签名
+//
+// 回退分支是为了让任何人 clone 下来都能直接 assembleRelease 出可安装的包。
+// 但 debug 密钥是 AGP 在每台机器上现生成的，每次 CI 构建都不一样，
+// 用它发布的包无法升级安装，也不能上架——所以正式分发必须走上面两条路径。
+// ---------------------------------------------------------------------------
+val keystoreProps = Properties()
+val keystorePropsFile = rootProject.file("keystore.properties")
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.inputStream().use { stream -> keystoreProps.load(stream) }
+}
+
+fun signingValue(propKey: String, envKey: String): String? =
+    System.getenv(envKey)?.takeIf { it.isNotBlank() }
+        ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("storeFile", "FLITR_KEYSTORE_FILE")
+val releaseStorePassword = signingValue("storePassword", "FLITR_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "FLITR_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "FLITR_KEY_PASSWORD")
+
+val hasReleaseSigning = releaseStoreFile != null &&
+    releaseStorePassword != null &&
+    releaseKeyAlias != null &&
+    releaseKeyPassword != null &&
+    file(releaseStoreFile).exists()
 
 android {
     namespace = "com.aios.flitr"
@@ -33,6 +65,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -46,9 +89,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // 本地自测用 debug 签名, 保证 assembleRelease 产物可以直接安装。
-            // 正式分发前必须换成自己的 keystore, 否则不同机器上的 debug key 不一致会导致覆盖安装失败。
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.lifecycle(
+                    "[Flitr] 未找到 release 签名配置（keystore.properties 或 FLITR_* 环境变量），" +
+                        "回退 debug 签名——产物仅可用于本机自测。"
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
