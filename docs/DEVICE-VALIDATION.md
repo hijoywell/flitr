@@ -259,3 +259,133 @@ adb shell svc power stayon usb
 ```
 
 之后 15.6MB 的 release 包安装只用了几秒。
+
+> **2026-11-12 更正**：休眠只是诱因，真正的原因是设备上残留的安装会话。见 8.6。
+
+---
+
+## 8. 构建环境限制：沙箱只允许写工作区（2026-11-12 追加）
+
+这一条不是 Flitr 的代码问题，但它让本地构建整个上午完全不可用，
+而且报错信息直指 Gradle 和 JDK，极具误导性，所以单独记下来。
+
+### 8.1 现象
+
+本地执行 `./gradlew :app:assembleRelease`，在**启动阶段**就失败：
+
+```text
+Could not initialize native services.
+> Failed to load native library 'native-platform.dll' for Windows 11 amd64.
+
+Caused by: java.io.IOException: 系统找不到指定的路径。
+    at java.io.WinNTFileSystem.createFileExclusively0(Native Method)
+    at java.io.File.createNewFile(File.java:1045)
+    at net.rubygrapefruit.platform.internal.NativeLibraryLocator.find(NativeLibraryLocator.java:46)
+```
+
+注意堆栈：失败在 `File.createNewFile`，**不是** `System.loadLibrary`。
+DLL 根本没走到「加载」那一步，是解压阶段就写不出文件。
+
+### 8.2 排除项
+
+按最容易怀疑的方向逐个排除，结论是**都不是**：
+
+| 怀疑对象 | 验证方法 | 结论 |
+| --- | --- | --- |
+| Gradle 发行版损坏 | 从腾讯镜像重下 9.9.1 全新解压 | 同样报错，排除 |
+| JDK 损坏 | 从清华镜像重下 Temurin 21.0.13+9 | 同样报错，排除 |
+| Gradle 缓存损坏 | `GRADLE_USER_HOME` 指向全新空目录 | 同样报错，排除 |
+| 路径含 `+` 号 | JDK 目录改名去掉 `+` | 同样报错，排除 |
+
+### 8.3 根因
+
+写一个最小 Java 程序，在几个目录里试 `File.createNewFile`：
+
+```text
+%TEMP%                  exists=true   ERROR=拒绝访问
+<repo>\.tooling\jtmp    mkdirs=true   createNewFile=true
+%USERPROFILE%\AppData\Local   exists=true   ERROR=拒绝访问
+%USERPROFILE%           exists=true   ERROR=拒绝访问
+```
+
+**只有工作区内能写。** 而 Gradle 的两个默认写入位置都在工作区外：
+
+```text
+~/.gradle   →  GRADLE_USER_HOME
+%TEMP%      →  java.io.tmpdir
+```
+
+Gradle 启动时要先把 `native-platform.dll` 解压到临时目录，写不进去就报「找不到路径」。
+
+**为什么一开始没查出来**：PowerShell 自己写 `%TEMP%` 完全正常，
+只有它拉起的子进程（`java.exe`）被拦。用 PowerShell 测文件系统看不出任何异常，
+这一点值得记住——**验证权限要用目标进程去验，不要用当前 shell 代劳**。
+
+### 8.4 修法
+
+把两个位置都指到仓库内，已封装成 `build.ps1`：
+
+```powershell
+$env:GRADLE_USER_HOME = "$PWD\.tooling\gradle-home"
+$env:GRADLE_OPTS      = "-Djava.io.tmpdir=$PWD\.tooling\jtmp"
+```
+
+```powershell
+./build.ps1                              # 构建 release APK
+./build.ps1 :app:testDebugUnitTest       # 只跑单元测试
+./build.ps1 :app:assembleRelease -Clean  # 先 clean
+```
+
+改完立刻 `BUILD SUCCESSFUL`。
+
+为避免重新下载 2.7 GB 依赖，把 `~/.gradle/caches` 复制进 `.tooling/gradle-home/caches`
+（robocopy 20 秒）。`.tooling/` 已在 `.gitignore` 里。
+
+**副作用**：构建时会打一行
+
+```text
+Warning: Unable to initialize metrics, ensure %USERPROFILE%\.android is writable
+```
+
+同一个原因，不影响产物。
+
+### 8.5 附带结论：原来的 Gradle 目录从来没坏过
+
+排查过程中重下过 JDK 和 Gradle，事后验证 `.tooling/gradle-9.9.1` 原样可用。
+唯一真损坏的是 JDK——`bin/` 整个目录消失只剩 `lib/`，那是真丢了，必须重装。
+
+### 8.6 同时纠正 7.5：安装卡死的真因
+
+7.5 把 `adb install` 挂起归因于设备休眠。2026-11-12 的复现推翻了这个结论。
+
+**真正原因是设备上堆了 4 个卡死的安装会话**——每次手动 kill 掉挂起的 `adb install`，
+都会在系统里留下一个孤儿 session，新的安装全部排在它们后面：
+
+```text
+Active Session 1029384588
+Active Session 343070177
+Active Session 1705092513
+Session 979932414
+```
+
+清掉之后：
+
+```bash
+adb shell pm install-abandon <sessionId>
+```
+
+```text
+Performing Streamed Install
+Success
+安装耗时 21.1 秒
+```
+
+同一个包，之前挂了 40 分钟；清完会话后 21 秒装完。
+
+`svc power stayon usb` 仍然值得保留（避免传输被挂起），但它不是主因。
+
+**下次遇到 `adb install` 长时间无输出，先查会话列表，别急着重启设备：**
+
+```bash
+adb shell dumpsys package | grep -i "Active Session"
+```
