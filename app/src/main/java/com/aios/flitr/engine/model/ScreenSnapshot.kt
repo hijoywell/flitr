@@ -101,6 +101,13 @@ data class ScreenSnapshot(
     /**
      * 页面指纹: 用于判断一次自动滑动是否真的翻页了。
      * 只取文本内容, 忽略顺序与空白, 避免进度条秒数变化导致误判为"已翻页"。
+     *
+     * **无文本页面必须退化为结构指纹。**
+     * 红果短剧把整屏内容画在 TextureView 里, 广告页和正片页的节点树都没有文本,
+     * 此时 `"".hashCode() == 0`, 两页指纹会坍缩成同一个 `"0"`。
+     * 后果在 [com.aios.flitr.engine.video.VideoAdStateMachine.verifyPendingSwipe]:
+     * 划走广告后复核发现"指纹没变", 判定滑动失败, 带 boost 补偿再划一次 ——
+     * 这次划掉的是正片。实测踩过。
      */
     fun fingerprint(excludingSeconds: Boolean = true): String {
         val tokens = nodes.asSequence()
@@ -109,7 +116,23 @@ data class ScreenSnapshot(
             .map { if (excludingSeconds) it.replace(COUNTDOWN_TOKEN, "#") else it }
             .sorted()
             .joinToString("|")
+        if (tokens.isEmpty()) return structureFingerprint()
         return tokens.hashCode().toString()
+    }
+
+    /**
+     * 结构指纹: 节点数量 + 每个节点的 viewId 与位置。
+     *
+     * 只在页面完全无文本时使用。位置必须参与, 因为红果的广告页与正片页
+     * 共用同一批 viewId（`ttlive_player_render_view` 等 22 个完全相同）,
+     * 只用 id 区分不开。
+     */
+    private fun structureFingerprint(): String {
+        val signature = nodes.asSequence()
+            .map { "${it.viewId ?: "-"}@${it.bounds.left},${it.bounds.top},${it.bounds.right},${it.bounds.bottom}" }
+            .sorted()
+            .joinToString(";")
+        return "s${nodes.size}:${signature.hashCode()}"
     }
 
     companion object {

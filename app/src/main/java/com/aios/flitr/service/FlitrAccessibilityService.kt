@@ -68,6 +68,15 @@ class FlitrAccessibilityService : AccessibilityService() {
     private var lastOcrAt: Long = 0L
     private var ocrRecognizer: MlKitOcrRecognizer? = null
 
+    /** 最近一次收到无障碍事件的时刻, 视频通道心跳靠它判断"页面是不是静了" */
+    private var lastEventAt: Long = 0L
+
+    /** 最近一次心跳采样的时刻, 用于按需降频 */
+    private var lastHeartbeatAt: Long = 0L
+
+    /** 最近一次用户手指触屏的时刻, 触屏期间不心跳 */
+    private var lastUserTouchAt: Long = 0L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         ServiceLocator.init(this)
@@ -78,6 +87,7 @@ class FlitrAccessibilityService : AccessibilityService() {
         updateNotification()
         applyOverlays()
         startPopupScanner()
+        startVideoHeartbeat()
     }
 
     private fun measureScreen() {
@@ -194,6 +204,7 @@ class FlitrAccessibilityService : AccessibilityService() {
         val pkg = router.foregroundPackage ?: return
         if (pkg !in prefs.videoPackages) return
 
+        lastUserTouchAt = SystemClock.uptimeMillis()
         coordinator.onUserTouch(SystemClock.uptimeMillis())
     }
 
@@ -215,6 +226,7 @@ class FlitrAccessibilityService : AccessibilityService() {
         if (pkg == ServiceLocator.selfPackage()) return
 
         val now = SystemClock.uptimeMillis()
+        lastEventAt = now
         EngineLog.countEvent(now, "${eventTypeName(e.eventType)}/$pkg/cct=${e.contentChangeTypes}")
 
         // 事件风暴治理: 视频页的进度条、弹幕、播放计时会以极高频率发出
@@ -269,6 +281,74 @@ class FlitrAccessibilityService : AccessibilityService() {
 
     private fun stopPopupScanner() {
         handler.removeCallbacks(popupScanTask)
+    }
+
+    /**
+     * 视频通道心跳。
+     *
+     * 存在的理由: 红果的直播间广告页把整屏内容画在 TextureView 里, 页面稳定之后
+     * **不产生任何无障碍事件** —— 实测停留 20 秒, `EVENT` 与 `ROUTE` 都是零条。
+     * 而视频通道是纯事件驱动的, 没有事件就永远不采样, 也就永远发现不了这类广告。
+     *
+     * 这和插屏通道 [popupScanTask] 是同一个教训: 静态内容必须靠定时器兜底。
+     * 区别在于这里**不是无条件轮询** —— 用"距上次事件的时长"当信号:
+     * 有事件说明页面在动、引擎看得见, 心跳完全不启动; 正片页因此不受影响。
+     */
+    private val videoHeartbeatTask = object : Runnable {
+        override fun run() {
+            runCatching { videoHeartbeatOnce() }
+                .onFailure { EngineLog.w("VIDEO heartbeat failed: ${it.javaClass.simpleName} ${it.message}") }
+            handler.postDelayed(this, VIDEO_HEARTBEAT_TICK_MS)
+        }
+    }
+
+    private fun startVideoHeartbeat() {
+        handler.removeCallbacks(videoHeartbeatTask)
+        val now = SystemClock.uptimeMillis()
+        // 初始化成"刚刚有过事件", 避免服务一启动就立刻采样
+        lastEventAt = now
+        lastHeartbeatAt = 0L
+        handler.postDelayed(videoHeartbeatTask, VIDEO_HEARTBEAT_TICK_MS)
+    }
+
+    private fun stopVideoHeartbeat() {
+        handler.removeCallbacks(videoHeartbeatTask)
+    }
+
+    private fun videoHeartbeatOnce() {
+        if (!prefs.videoEnabled || prefs.paused) return
+        if (!isInteractiveNow() || !isScreenOnNow()) return
+
+        val pkg = router.foregroundPackage ?: return
+        if (pkg in prefs.whitelist) return
+        if (pkg !in prefs.videoPackages) return
+
+        val now = SystemClock.uptimeMillis()
+
+        // 有事件时事件本身就是心跳, 不重复采样
+        val idle = now - lastEventAt
+        if (idle < VIDEO_HEARTBEAT_IDLE_MS) return
+
+        // 用户正在划屏幕时不介入, 也别白烧 OCR
+        if (now - lastUserTouchAt < VIDEO_HEARTBEAT_TOUCH_GUARD_MS) return
+
+        // 长时间无事件说明用户大概率在安静看正片, 降频省电
+        val interval = if (idle > VIDEO_HEARTBEAT_DOWNGRADE_MS) {
+            VIDEO_HEARTBEAT_SLOW_MS
+        } else {
+            VIDEO_HEARTBEAT_FAST_MS
+        }
+        if (now - lastHeartbeatAt < interval) return
+        lastHeartbeatAt = now
+
+        // 走和事件完全相同的入口, 包括 OCR 兜底与状态机, 不新增第二条判定路径
+        handleVideo(pkg, null, now)
+    }
+
+    /** 息屏后没有事件, 心跳必须自己停, 否则会整夜截图 + 推理。 */
+    private fun isScreenOnNow(): Boolean {
+        val pm = getSystemService(android.os.PowerManager::class.java) ?: return true
+        return runCatching { pm.isInteractive }.getOrDefault(true)
     }
 
     private var lastScanLogAt: Long = 0L
@@ -513,6 +593,7 @@ class FlitrAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         stopPopupScanner()
+        stopVideoHeartbeat()
         pendingRecheck?.let { handler.removeCallbacks(it) }
         runCatching { touchWatcher.stop() }
         runCatching { pill.hide() }
@@ -565,5 +646,23 @@ class FlitrAccessibilityService : AccessibilityService() {
 
         /** 插屏定时扫描间隔: 覆盖不产生无障碍事件的静态弹窗 */
         const val POPUP_SCAN_INTERVAL_MS = 2500L
+
+        /** 视频通道心跳的基础节拍 */
+        const val VIDEO_HEARTBEAT_TICK_MS = 500L
+
+        /** 距上次无障碍事件超过这个时长才启用心跳（有事件时事件本身就是心跳） */
+        const val VIDEO_HEARTBEAT_IDLE_MS = 1500L
+
+        /** 正常心跳间隔 */
+        const val VIDEO_HEARTBEAT_FAST_MS = 1200L
+
+        /** 超过这个无事件时长后降频, 避免安静看正片时持续烧电 */
+        const val VIDEO_HEARTBEAT_DOWNGRADE_MS = 30_000L
+
+        /** 降频后的心跳间隔 */
+        const val VIDEO_HEARTBEAT_SLOW_MS = 3000L
+
+        /** 用户触屏后这段时间内不心跳 */
+        const val VIDEO_HEARTBEAT_TOUCH_GUARD_MS = 3000L
     }
 }
