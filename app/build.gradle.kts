@@ -7,8 +7,8 @@ plugins {
 }
 
 // 版本号集中在这里, 避免 versionName 与产物文件名不一致。
-val appVersionName = "1.0.4"
-val appVersionCode = 17
+val appVersionName = "1.0.3"
+val appVersionCode = 16
 
 // 当前只打包 arm64-v8a（见 defaultConfig.ndk.abiFilters），产物文件名需要带上它。
 val apkAbi = "arm64-v8a"
