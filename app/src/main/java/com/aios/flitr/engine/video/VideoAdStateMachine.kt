@@ -77,11 +77,15 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
     private var swipeAttempts: Int = 0
     private var lastNote: String? = null
 
+    /** 广告观察期内连续"读不到广告信号"的次数, 用于容忍节点树抖动。 */
+    private var adMissCount: Int = 0
+
     /** 用户手指触屏: 立刻中止后续自动动作并进入避让冷却。 */
     fun onUserTouch(now: Long) {
         state = VideoHostState.UserTouchCooldown(now + USER_TOUCH_COOLDOWN_MS)
         pendingSwipeFingerprint = null
         swipeAttempts = 0
+        adMissCount = 0
     }
 
     fun reset() {
@@ -91,6 +95,7 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
         pendingSwipeAt = 0L
         swipeAttempts = 0
         lastNote = null
+        adMissCount = 0
     }
 
     fun onSnapshot(snapshot: ScreenSnapshot, now: Long = snapshot.timestampMs): Evaluation {
@@ -132,9 +137,27 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
 
         // --- 5. 非广告 ---
         if (!assessment.isAd) {
+            // 广告观察期内的"信号抖动"不算数。
+            //
+            // 实测: 红果商城图集广告页的节点树在 20 节点 / 28 节点之间来回跳, 薄的那一帧
+            // 读不到底部「上滑继续看短剧」, 单帧判定就翻成"非广告"。如果这里立刻复位,
+            // debounce 永远走不完 —— 表现就是广告挂在屏幕上一直不划走。
+            //
+            // 所以在广告观察/等待倒计时期间, 允许若干次"读不到信号"不影响状态机;
+            // 只有连续 DEBOUNCE 超时(见 confirmAd 的观察上限)或明确的正片特征才复位。
+            // 正片页不受影响: 它从不进入 DebouncingAd, 走的仍是下面的复位。
+            if (state is VideoHostState.DebouncingAd || state is VideoHostState.WaitingCountdown) {
+                val missCount = adMissCount + 1
+                if (missCount <= AD_MISS_TOLERANCE) {
+                    adMissCount = missCount
+                    return Evaluation(state, emptyList(), "广告信号暂缺 #$missCount, 继续观察")
+                }
+            }
+            adMissCount = 0
             state = VideoHostState.WatchingNormalVideo
             return Evaluation(state, emptyList(), null)
         }
+        adMissCount = 0
 
         // --- 6. 广告分支 ---
         return when (val cur = state) {
@@ -323,5 +346,14 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
 
         /** 两次自动动作之间的最小间隔 */
         const val ACTION_COOLDOWN_MS = 1000L
+
+        /**
+         * 广告观察期内允许连续"读不到信号"的帧数。
+         *
+         * 红果的图集广告页节点树会在 20 / 28 节点之间抖动, 薄帧读不到底部文案。
+         * 心跳间隔 1.2-3 秒, 容忍 3 帧相当于给 4-9 秒宽限: 足够跨过抖动,
+         * 又不足以让真实的"广告结束/用户划走"被无限拖延。
+         */
+        const val AD_MISS_TOLERANCE = 3
     }
 }

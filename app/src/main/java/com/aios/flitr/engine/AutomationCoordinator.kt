@@ -47,6 +47,9 @@ class AutomationCoordinator(
     private var lastPopupClickAt: Long = 0L
     private var lastPopupLogFingerprint: String? = null
 
+    /** 判定摘要去重, 见 handleVideo 里的 DIAG 日志 */
+    private var lastDiagKey: String? = null
+
     /** 开屏通道: 命中即点, 命中后关闭时间窗。 */
     fun handleSplash(snapshot: ScreenSnapshot, elapsedMs: Long, appName: String): Boolean {
         val verdict = splashEngine.evaluate(snapshot)
@@ -104,6 +107,19 @@ class AutomationCoordinator(
         )
         // 同时把完整节点树落盘, 供无法用 uiautomator 抓取的广告页取证
         SnapshotDumper.dumpIfChanged(ServiceLocator.context(), snapshot, assessment)
+
+        // 判定摘要: 广告没被划走时, 这是唯一能看出"卡在哪一步"的日志。
+        // 只在状态或判定变化时打印, 避免 4 次/秒刷屏。
+        val diagKey = "${evaluation.state}|${assessment?.isAd}|${assessment?.adHit?.normalized}"
+        if (diagKey != lastDiagKey) {
+            lastDiagKey = diagKey
+            EngineLog.d(
+                "DIAG state=${evaluation.state} isAd=${assessment?.isAd} " +
+                    "conf=${assessment?.confidence ?: 0f} nodes=${snapshot.nodes.size} " +
+                    "text=${snapshot.nodes.count { it.text.isNotBlank() }} " +
+                    "hit='${assessment?.adHit?.normalized ?: "-"}' note='${evaluation.note ?: "-"}'",
+            )
+        }
         if (assessment?.isAd == true) {
             EngineLog.d(
                 "AD conf=${"%.2f".format(assessment.confidence)} countdown=${assessment.countdownSeconds} " +

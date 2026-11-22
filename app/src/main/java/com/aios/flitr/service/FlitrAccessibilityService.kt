@@ -226,15 +226,19 @@ class FlitrAccessibilityService : AccessibilityService() {
         if (pkg == ServiceLocator.selfPackage()) return
 
         val now = SystemClock.uptimeMillis()
-        lastEventAt = now
         EngineLog.countEvent(now, "${eventTypeName(e.eventType)}/$pkg/cct=${e.contentChangeTypes}")
 
         // 事件风暴治理: 视频页的进度条、弹幕、播放计时会以极高频率发出
         // TYPE_WINDOW_CONTENT_CHANGED, 且 contentChangeTypes 里没有文本/子树变化。
         // 这类事件不可能改变"是不是广告"的判断, 直接丢弃, 避免为了无用事件去遍历节点树。
+        //
+        // 注意 lastEventAt 必须放在这之后更新: 它是"引擎真的看见页面在动"的信号,
+        // 心跳靠它判断要不要兜底。红果的图集广告页恰好只发这种被丢弃的事件 ——
+        // 早先放在过滤之前, 心跳被这个"假活动"永久压制, 一次都没启动过。
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED && !hasMeaningfulChange(e)) {
             return
         }
+        lastEventAt = now
 
         router.onForegroundChanged(pkg, now)
         FlitrRuntime.setForeground(pkg, ServiceLocator.appLabel(pkg))
@@ -319,12 +323,9 @@ class FlitrAccessibilityService : AccessibilityService() {
         if (!prefs.videoEnabled || prefs.paused) return
         if (!isInteractiveNow() || !isScreenOnNow()) return
 
-        val pkg = router.foregroundPackage ?: return
-        if (pkg in prefs.whitelist) return
-        if (pkg !in prefs.videoPackages) return
-
         val now = SystemClock.uptimeMillis()
 
+        // 廉价条件全部前置: 心跳 500ms 一跳, 节点树必须只在真正要采样时才拉。
         // 有事件时事件本身就是心跳, 不重复采样
         val idle = now - lastEventAt
         if (idle < VIDEO_HEARTBEAT_IDLE_MS) return
@@ -339,7 +340,24 @@ class FlitrAccessibilityService : AccessibilityService() {
             VIDEO_HEARTBEAT_FAST_MS
         }
         if (now - lastHeartbeatAt < interval) return
+
+        // 先记账再采样。放在拉树之后会导致"非视频包"分支永远走不到记账那一行,
+        // 于是每个 500ms tick 都重新拉一次整棵树 —— 实测 995 次/3000 行日志,
+        // 纯属空转。记账前置后, 无论本次结论如何都要等满 interval 才允许下一次采样。
         lastHeartbeatAt = now
+
+        // 包名优先从节点树读。
+        //
+        // router.foregroundPackage 只由无障碍事件写入 —— 服务被系统重绑后它是 null,
+        // 而静默页(红果图集广告)又一条事件都不发, 心跳会永久卡在这一行 return。
+        // 这正是"广告挂在屏幕上一直不划走"的直接原因, 实测踩过。
+        // 读到的包名写回 [cachedRootPkg], 让弹窗扫描器的预筛也能用上。
+        val pkg = acquireRoot()?.packageName?.toString()?.takeIf { it.isNotBlank() }
+            ?.also { cachedRootPkg = it }
+            ?: router.foregroundPackage
+            ?: return
+        if (pkg in prefs.whitelist) return
+        if (pkg !in prefs.videoPackages) return
 
         // 走和事件完全相同的入口, 包括 OCR 兜底与状态机, 不新增第二条判定路径
         handleVideo(pkg, null, now)
@@ -352,9 +370,40 @@ class FlitrAccessibilityService : AccessibilityService() {
     }
 
     private var lastScanLogAt: Long = 0L
+    private var scanCostSumMs = 0L
+    private var scanCostCount = 0
+    private var scanCostWindowStart = 0L
+
+    /**
+     * 最近一次从节点树读到的前台包名。
+     *
+     * router.foregroundPackage 只由事件维护, 静默页(红果广告页)一个事件都不发,
+     * 服务重绑后它永远是 null —— 预筛就永远拦不住, 扫描器每 2.5 秒白拉一次树。
+     * 这里把每次拉树读到的包名存下来, 下个周期就能走廉价分支跳过。
+     */
+    private var cachedRootPkg: String? = null
 
     private fun scanPopupOnce() {
-        val now = SystemClock.uptimeMillis()
+        val startedMs = SystemClock.uptimeMillis()
+        try {
+            scanPopupOnceInner(startedMs)
+        } finally {
+            // 扫描开销必须可见: 常驻定时器一旦变贵, 表现就是"待机也耗电",
+            // 而这种问题在事件驱动的日志里完全看不出来。每 60 秒汇总一次。
+            scanCostSumMs += SystemClock.uptimeMillis() - startedMs
+            scanCostCount++
+            if (scanCostWindowStart == 0L) scanCostWindowStart = startedMs
+            if (startedMs - scanCostWindowStart >= 60_000L) {
+                val avg = scanCostSumMs / scanCostCount.coerceAtLeast(1)
+                EngineLog.d("POPUP scan cost: avg=${avg}ms total=${scanCostSumMs}ms over $scanCostCount scans/60s")
+                scanCostSumMs = 0L
+                scanCostCount = 0
+                scanCostWindowStart = startedMs
+            }
+        }
+    }
+
+    private fun scanPopupOnceInner(now: Long) {
         fun skip(reason: String) {
             if (now - lastScanLogAt > 10_000) {
                 lastScanLogAt = now
@@ -362,24 +411,50 @@ class FlitrAccessibilityService : AccessibilityService() {
             }
         }
 
-        if (!prefs.popupEnabled) return skip("popupEnabled=false")
+        if (!prefs.popupEnabled && !prefs.videoEnabled) return skip("both channels disabled")
         if (prefs.paused) return skip("paused")
         if (!isInteractiveNow()) return skip("not interactive")
 
-        val root = acquireRoot() ?: return skip("no root")
+        // --- 廉价预筛: 能用缓存定案就绝不拉节点树 ---
+        //
+        // acquireRoot() 会把整棵无障碍树跨进程复制过来, 实测 48ms/次, 2.5 秒一次
+        // 就是约 2% 的常驻 CPU —— 用户感受是"耗电快"。而绝大多数时刻前台 App
+        // 既不是弹窗目标也不是视频托管, 拉了也是白拉。
+        //
+        // 缓存由 TYPE_WINDOW_STATE_CHANGED 维护, 切 App 必发这个事件, 所以缓存
+        // 唯一可能空白的场景是"服务刚重绑且用户停在静默页" —— 那正是心跳要兜的场景,
+        // 让它走缓存为空的分支拉一次树即可。
+        val cached = router.foregroundPackage ?: cachedRootPkg
+        if (now - lastScanLogAt > 10_000) {
+            lastScanLogAt = now
+            EngineLog.d(
+                "POPUP prefilter router=${router.foregroundPackage} rootCache=$cachedRootPkg " +
+                    "popupPkgs=${prefs.popupPackages.size} videoPkgs=${prefs.videoPackages.size}",
+            )
+        }
+        if (cached != null) {
+            if (cached in prefs.whitelist) return skip("whitelisted: $cached")
+            if (prefs.videoEnabled && cached in prefs.videoPackages) {
+                // 视频包由心跳兜底(它自己做 1.2-3s 的降频), 扫描器不再重复介入
+                return skip("video app: $cached")
+            }
+            if (!prefs.popupEnabled || cached !in prefs.popupPackages) {
+                return skip("not in popupPackages: $cached")
+            }
+        }
 
-        // 包名从节点树自己读, 不用 router.foregroundPackage。
-        // 后者只由无障碍事件写入, 而静态弹窗不产生任何事件 —— 服务重启后它一直是 null,
-        // 扫描器会把自己挡在 "no foreground package" 这一步。实测踩过。
-        val pkg = root.packageName?.toString()?.takeIf { it.isNotBlank() }
-            ?: router.foregroundPackage
+        // --- 到这里才拉树: 缓存为空(服务重绑)或缓存指向弹窗目标包 ---
+        val root = acquireRoot()
+        val pkg = root?.packageName?.toString()?.takeIf { it.isNotBlank() }
+            ?.also { cachedRootPkg = it }
+            ?: cached
             ?: return skip("no package")
 
         if (pkg in prefs.whitelist) return skip("whitelisted: $pkg")
-        // 插屏通道按包名 opt-in —— 「广告」两个字在任意 App 里都可能出现
+        if (pkg in prefs.videoPackages) return skip("video app: $pkg")
+        if (!prefs.popupEnabled) return skip("popupEnabled=false")
         if (pkg !in prefs.popupPackages) return skip("not in popupPackages: $pkg")
-        // 视频托管应用由状态机处理, 这里不重复介入
-        if (prefs.videoEnabled && pkg in prefs.videoPackages) return skip("video app: $pkg")
+        if (root == null) return skip("no root")
 
         val snapshot = buildSnapshot(root, pkg, null, now)
         if (now - lastScanLogAt > 10_000) {

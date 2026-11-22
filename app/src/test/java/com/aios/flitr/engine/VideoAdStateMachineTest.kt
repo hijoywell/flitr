@@ -323,6 +323,59 @@ class VideoAdStateMachineTest {
         val result = machine.onSnapshot(drama, now = 10_000)
         assertTrue("正片不应被划走", result.commands.isEmpty())
     }
+
+    /**
+     * 真机回归: 广告页节点树抖动导致永远划不走。
+     *
+     * 红果的商城图集广告页, 节点树在读得到「上滑继续看短剧」的厚帧和读不到的薄帧之间
+     * 每 5 秒来回跳。旧实现里只要出现一次"非广告"就复位状态机, debounce 计时永远走不完,
+     * 广告挂在屏幕上一整局都不动。这里用厚帧/薄帧交替复现。
+     */
+    @Test
+    fun `广告信号间歇性缺失时 仍能完成上滑`() {
+        val machine = VideoAdStateMachine(ruleWithCombo)
+        val thick = snapshot(node("返回"), node("上滑继续观看短剧"))
+        val thin = snapshot() // 薄帧: 一个文本节点都没有
+
+        // 交替投喂, 模拟 5 秒周期抖动; 观察期 450ms, 每次间隔 1000ms
+        var now = 10_000L
+        machine.onSnapshot(thick, now) // 进入观察
+        var swiped = false
+        for (i in 0 until 12) {
+            now += 1_000L
+            val feed = if (i % 2 == 0) thin else thick
+            val r = machine.onSnapshot(feed, now)
+            if (r.commands.any { it is AutomationCommand.SwipeUp }) {
+                swiped = true
+                break
+            }
+        }
+        assertTrue("薄帧不应打断广告观察, 最终应上滑", swiped)
+    }
+
+    /** 但连续读不到广告信号(真的不是广告了)必须复位, 不能一直挂着。 */
+    @Test
+    fun `连续非广告帧 超容忍后复位`() {
+        val machine = VideoAdStateMachine(ruleWithCombo)
+        val thick = snapshot(node("返回"), node("上滑继续观看短剧"))
+        val drama = snapshot(node("第 92 集"), node("选集"))
+
+        machine.onSnapshot(thick, now = 10_000)
+        assertTrue(machine.state is VideoHostState.DebouncingAd)
+
+        // 连喂超过容忍次数的正片帧
+        var now = 11_000L
+        var last = machine.onSnapshot(drama, now)
+        for (i in 0 until VideoAdStateMachine.AD_MISS_TOLERANCE + 1) {
+            now += 1_000L
+            last = machine.onSnapshot(drama, now)
+        }
+        assertTrue(
+            "连续正片帧应复位到 WatchingNormalVideo, 实际=${last.state}",
+            last.state is VideoHostState.WatchingNormalVideo,
+        )
+        assertTrue("复位后不应有动作", last.commands.none { it is AutomationCommand.SwipeUp })
+    }
 }
 
 /** 开屏引擎的防误触用例。 */
