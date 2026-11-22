@@ -383,6 +383,9 @@ class FlitrAccessibilityService : AccessibilityService() {
      */
     private var cachedRootPkg: String? = null
 
+    /** 上次真正解析视频快照的时刻, 见 handleVideo 的节流 */
+    private var lastVideoParseAt: Long = 0L
+
     private fun scanPopupOnce() {
         val startedMs = SystemClock.uptimeMillis()
         try {
@@ -560,6 +563,15 @@ class FlitrAccessibilityService : AccessibilityService() {
     }
 
     private fun handleVideo(pkg: String, className: String?, now: Long) {
+        // 全局节流: 事件通道和心跳会在同一时刻各调一次, 而单次节点树遍历要 40-50ms。
+        // 实测正片页因此达到 18% 单核占用。这里按"距上次真正解析的时间"兜底,
+        // 保证任一时刻只有一条解析在跑。
+        //
+        // 300ms 不牺牲响应性: 广告出现的判定有 debounce (观察期 450ms) 兜着,
+        // 而且倒计时本身 1 秒一跳, 300ms 的采样粒度远低于需求。
+        if (now - lastVideoParseAt < VIDEO_PARSE_MIN_GAP_MS) return
+        lastVideoParseAt = now
+
         val root = acquireRoot()
         if (root == null) {
             logNoRoot()
@@ -712,6 +724,9 @@ class FlitrAccessibilityService : AccessibilityService() {
 
         /** 有效文本少于这个数量时, 认为内容可能在 SurfaceView 里, 触发 OCR 兜底 */
         const val OCR_TRIGGER_TEXT_COUNT = 4
+
+        /** 两次视频快照解析之间的最小间隔, 见 handleVideo */
+        const val VIDEO_PARSE_MIN_GAP_MS = 300L
 
         /** 同一页面重复 OCR 的最小间隔 */
         const val OCR_REPEAT_MS = 3000L
