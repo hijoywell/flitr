@@ -77,15 +77,18 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
     private var swipeAttempts: Int = 0
     private var lastNote: String? = null
 
-    /** 广告观察期内连续"读不到广告信号"的次数, 用于容忍节点树抖动。 */
-    private var adMissCount: Int = 0
+    /** 广告观察期内首次"读不到广告信号"的时刻, 用于按**时长**容忍节点树抖动。 */
+    private var adMissSince: Long? = null
+
+    /** NeedsManual 后自动重试的轮次, 见 onSnapshot 第 2 步 */
+    private var manualRetryCount: Int = 0
 
     /** 用户手指触屏: 立刻中止后续自动动作并进入避让冷却。 */
     fun onUserTouch(now: Long) {
         state = VideoHostState.UserTouchCooldown(now + USER_TOUCH_COOLDOWN_MS)
         pendingSwipeFingerprint = null
         swipeAttempts = 0
-        adMissCount = 0
+        adMissSince = null
     }
 
     fun reset() {
@@ -95,7 +98,8 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
         pendingSwipeAt = 0L
         swipeAttempts = 0
         lastNote = null
-        adMissCount = 0
+        adMissSince = null
+        manualRetryCount = 0
     }
 
     fun onSnapshot(snapshot: ScreenSnapshot, now: Long = snapshot.timestampMs): Evaluation {
@@ -111,8 +115,26 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
         // --- 2. 等待人工介入: 只有页面真的变了才恢复 ---
         if (current is VideoHostState.NeedsManual) {
             if (snapshot.fingerprint() == current.fingerprint) {
-                return Evaluation(current, emptyList(), "连续滑动无效, 已停止介入")
+                // 页面没变。但"永远停止"对广告用户不可接受 —— 广告会一直挂着。
+                // 限次重试: 隔 NEEDS_MANUAL_RETRY_MS 后允许再走一轮观察+滑动,
+                // 累计超过 MAX_MANUAL_RETRIES 轮才真正放弃。每一轮的判定条件
+                // 与首次完全相同(conf 达标才划), 不会因此误伤正片。
+                if (now - current.since < NEEDS_MANUAL_RETRY_MS) {
+                    return Evaluation(current, emptyList(), "连续滑动无效, 已停止介入")
+                }
+                if (manualRetryCount >= MAX_MANUAL_RETRIES) {
+                    return Evaluation(current, emptyList(), "连续滑动无效, 已放弃 (${manualRetryCount} 轮)")
+                }
+                manualRetryCount++
+                val next = VideoHostState.DebouncingAd(now)
+                state = next
+                return Evaluation(
+                    next,
+                    listOf(AutomationCommand.ScheduleRecheck(rule.debounceMs)),
+                    "广告仍在, 第 $manualRetryCount 轮重试",
+                )
             }
+            manualRetryCount = 0
             state = VideoHostState.WatchingNormalVideo
         }
 
@@ -143,21 +165,24 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
             // 读不到底部「上滑继续看短剧」, 单帧判定就翻成"非广告"。如果这里立刻复位,
             // debounce 永远走不完 —— 表现就是广告挂在屏幕上一直不划走。
             //
-            // 所以在广告观察/等待倒计时期间, 允许若干次"读不到信号"不影响状态机;
-            // 只有连续 DEBOUNCE 超时(见 confirmAd 的观察上限)或明确的正片特征才复位。
-            // 正片页不受影响: 它从不进入 DebouncingAd, 走的仍是下面的复位。
+            // 容忍按**时长**算而不是帧数。帧数会被采样频率左右: 同步判定每 300ms 就喂
+            // 一帧, 3 帧配额两秒内就耗光了, 宽容等于没有 —— 实测踩过这个坑。
+            // 用时长表达后, 无论上游喂多快, 保护窗口都是恒定的 AD_MISS_GRACE_MS。
             if (state is VideoHostState.DebouncingAd || state is VideoHostState.WaitingCountdown) {
-                val missCount = adMissCount + 1
-                if (missCount <= AD_MISS_TOLERANCE) {
-                    adMissCount = missCount
-                    return Evaluation(state, emptyList(), "广告信号暂缺 #$missCount, 继续观察")
+                val missSince = adMissSince
+                if (missSince == null) {
+                    adMissSince = now
+                    return Evaluation(state, emptyList(), "广告信号暂缺, 开始宽容计时")
+                }
+                if (now - missSince < AD_MISS_GRACE_MS) {
+                    return Evaluation(state, emptyList(), "广告信号暂缺 ${now - missSince}ms, 继续观察")
                 }
             }
-            adMissCount = 0
+            adMissSince = null
             state = VideoHostState.WatchingNormalVideo
             return Evaluation(state, emptyList(), null)
         }
-        adMissCount = 0
+        adMissSince = null
 
         // --- 6. 广告分支 ---
         return when (val cur = state) {
@@ -348,12 +373,20 @@ class VideoAdStateMachine(private val rule: CompiledVideoRule) {
         const val ACTION_COOLDOWN_MS = 1000L
 
         /**
-         * 广告观察期内允许连续"读不到信号"的帧数。
+         * 广告观察期内允许"读不到信号"的**时长**上限。
          *
          * 红果的图集广告页节点树会在 20 / 28 节点之间抖动, 薄帧读不到底部文案。
-         * 心跳间隔 1.2-3 秒, 容忍 3 帧相当于给 4-9 秒宽限: 足够跨过抖动,
-         * 又不足以让真实的"广告结束/用户划走"被无限拖延。
+         *
+         * 用时长而不是帧数: 帧数取决于上游采样频率, 同步判定每 300ms 喂一帧时
+         * 3 帧两秒就耗光了。4 秒足够跨过抖动周期(实测约 2.5s 一次厚帧),
+         * 又短到不会让真实的"广告结束/用户划走"被无限拖延。
          */
-        const val AD_MISS_TOLERANCE = 3
+        const val AD_MISS_GRACE_MS = 4000L
+
+        /** NeedsManual 后多久允许自动重试一轮 */
+        const val NEEDS_MANUAL_RETRY_MS = 8000L
+
+        /** 自动重试的最多轮次, 超过后真正停止(避免对卡死的页面无限循环) */
+        const val MAX_MANUAL_RETRIES = 3
     }
 }

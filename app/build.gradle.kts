@@ -7,8 +7,8 @@ plugins {
 }
 
 // 版本号集中在这里, 避免 versionName 与产物文件名不一致。
-val appVersionName = "1.0.4"
-val appVersionCode = 17
+val appVersionName = "1.0.5"
+val appVersionCode = 18
 
 // 当前只打包 arm64-v8a（见 defaultConfig.ndk.abiFilters），产物文件名需要带上它。
 val apkAbi = "arm64-v8a"
@@ -69,6 +69,14 @@ android {
     defaultConfig {
         applicationId = "com.aios.flitr"
         minSdk = 30
+        // 保持跟随 compileSdk。
+        //
+        // 曾经为了绕开 Android 13+ 的「受限设置」把它降到 32, 实测无效 ——
+        // 降级后 ACCESS_RESTRICTED_SETTINGS 只从 deny 变成 default,
+        // 设置页里依然看不到本服务。真正的拦截在 ColorOS 自己的白名单
+        // (accessibility_turn_off_skip_package), 与 targetSdk 无关。
+        // 真正让服务能起来的修复在别处: 见 FlitrAccessibilityService.updateNotification
+        // 与 AndroidManifest 的说明。
         targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
@@ -128,6 +136,13 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    // ML Kit 内置模型文件必须以**未压缩**形式打进 APK, 其 native 层用 mmap 直接读,
+    // 被压缩后读到的就是乱码, 表现为「OCR 每次 process 成功但永远返回 0 个文本块」。
+    // .tflite 是 AGP 默认不压缩的, 但 .binarypb/.fb/.pb/.bincfg 默认会被压缩, 必须显式声明。
+    androidResources {
+        noCompress += listOf("tflite", "binarypb", "fb", "pb", "bincfg", "conv_model", "lstm_model")
     }
 
     packaging {

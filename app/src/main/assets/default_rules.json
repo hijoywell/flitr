@@ -45,11 +45,16 @@
           "^领券购买$",
           ".*秒后可?(领取|解锁|继续|跳过|划走).*",
           "^Sponsored$",
-          "上滑继续(?:观看|看)短剧"
+          "上滑.{0,10}短剧",
+          "^不感兴趣$",
+          "^去商城购买$",
+          "^图集\\d+/\\d+$",
+          "商家推荐",
+          "^\\s*@?拼多多\\s*$"
         ],
         "allTextRegex": [
-          "^返回$",
-          "^上滑继续观看短剧$"
+          "上滑",
+          "短剧"
         ],
         "anyViewIdSuffix": [
           "tt_reward_ad_countdown",
@@ -80,8 +85,7 @@
         "keepWatchingDialogBtnRegex": [
           "^继续观看$",
           "^立即继续观看$",
-          "^开心收下$",
-          "^去领取$"
+          "^开心收下$"
         ],
         "modalCloseViewIdSuffix": [
           "tt_video_ad_close_layout",

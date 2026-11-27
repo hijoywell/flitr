@@ -23,9 +23,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,6 +38,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aios.flitr.data.prefs.FlitrPrefs
 import com.aios.flitr.ui.FlitrViewModel
@@ -59,9 +64,43 @@ fun DashboardScreen(vm: FlitrViewModel, onNavigate: (Tab) -> Unit) {
     val tokens = LocalFlitrTokens.current
     val prefs by vm.prefs.collectAsStateWithLifecycle()
     val stats by vm.stats.collectAsStateWithLifecycle()
-    val connected by vm.serviceConnected.collectAsStateWithLifecycle()
+    val runtimeConnected by vm.serviceConnected.collectAsStateWithLifecycle()
     val workMode by vm.workMode.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // 激活状态必须同时看两个来源:
+    //
+    //  - runtimeConnected: 本进程里无障碍服务此刻是否真的连上了(决定引擎在不在跑)
+    //  - isAccessibilityEnabled: 系统设置里那个开关是否开着
+    //
+    // 只用前者会出这个 bug: 进程被系统杀掉后重开, 单例重新初始化为 false,
+    // 而系统不会因为"用户打开了 App"就重新回调 onServiceConnected ——
+    // 于是明明开关是开的, 界面却显示"激活", 点一下还把你送去系统设置再拨一次。
+    // 反过来只看系统开关也不行: 开关开着但服务没连上时引擎其实不工作。
+    var systemEnabled by remember { mutableStateOf(SystemIntents.isAccessibilityEnabled(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                systemEnabled = SystemIntents.isAccessibilityEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 给服务一点时间连上: 刚进 App 时系统绑定是异步的, 立刻判死会闪一下"激活"
+    var graceExpired by remember { mutableStateOf(false) }
+    LaunchedEffect(systemEnabled, runtimeConnected) {
+        if (systemEnabled && !runtimeConnected) {
+            delay(1500)
+            graceExpired = true
+        } else {
+            graceExpired = false
+        }
+    }
+
+    val connected = runtimeConnected || (systemEnabled && !graceExpired)
 
     Column(
         modifier = Modifier
@@ -89,7 +128,16 @@ fun DashboardScreen(vm: FlitrViewModel, onNavigate: (Tab) -> Unit) {
             savedMinutes = stats.savedMinutes,
             onTogglePause = { vm.setPaused(!prefs.paused) },
             onActivate = {
-                runCatching { context.startActivity(SystemIntents.accessibilitySettings()) }
+                // 点"激活"前先现查一次系统开关。
+                //
+                // 开关已经是开的, 说明用户根本不需要再去拨一遍 —— 这时跳设置页纯属误导。
+                // 真正的情况通常是"进程刚被杀掉、服务还没被系统重新绑定", 等一下就好;
+                // 实在没连上再给个明确的去设置的动作。
+                val enabled = SystemIntents.isAccessibilityEnabled(context)
+                systemEnabled = enabled
+                if (!enabled) {
+                    runCatching { context.startActivity(SystemIntents.accessibilitySettings()) }
+                }
             },
         )
 

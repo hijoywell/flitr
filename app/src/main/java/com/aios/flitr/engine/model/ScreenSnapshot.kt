@@ -126,8 +126,11 @@ data class ScreenSnapshot(
      * 只在页面完全无文本时使用。位置必须参与, 因为红果的广告页与正片页
      * 共用同一批 viewId（`ttlive_player_render_view` 等 22 个完全相同）,
      * 只用 id 区分不开。
+     *
+     * 公开给服务层做「OCR 结果粘滞」的判据: 只有结构完全没变的薄帧,
+     * 才允许复用上一次的 OCR 文本, 见 FlitrAccessibilityService.handleVideo。
      */
-    private fun structureFingerprint(): String {
+    fun structureFingerprint(): String {
         val signature = nodes.asSequence()
             .map { "${it.viewId ?: "-"}@${it.bounds.left},${it.bounds.top},${it.bounds.right},${it.bounds.bottom}" }
             .sorted()

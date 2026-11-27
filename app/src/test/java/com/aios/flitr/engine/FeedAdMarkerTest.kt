@@ -45,7 +45,10 @@ class FeedAdMarkerTest {
     private val rule = CompiledVideoRule(
         VideoScenarioRule(
             packageName = "com.phoenix.read",
-            adIndicators = AdIndicators(anyTextRegex = listOf("上滑继续(?:观看|看)短剧")),
+            adIndicators = AdIndicators(
+                anyTextRegex = listOf("上滑.{0,10}短剧"),
+                allTextRegex = listOf("上滑", "短剧"),
+            ),
             normalDramaSafeguards = DramaSafeguards(
                 allTextRegex = listOf("第\\s*\\d+\\s*集", "选集"),
             ),
@@ -65,6 +68,72 @@ class FeedAdMarkerTest {
     fun `长措辞_上滑继续观看短剧_判定为广告`() {
         val verdict = AdClassifier.assess(snapshot(node("上滑继续观看短剧")), rule)
         assertTrue("「上滑继续观看短剧」应判定为广告", verdict.isAd)
+    }
+
+    /**
+     * OCR 把「看」认成「着」是实测发生过的(2026-11-27, 超级驾驶游戏广告):
+     * 屏幕上明明是「上滑继续看短剧」, 端侧识别结果却是「公上滑继续着短剧」。
+     * 规则必须容忍这种单字噪声, 否则整条广告的判定链直接断掉。
+     */
+    @Test
+    fun `OCR噪声_上滑继续着短剧_仍然判定为广告`() {
+        val verdict = AdClassifier.assess(snapshot(node("公上滑继续着短剧")), rule)
+        assertTrue("OCR 把「看」认成「着」时仍应判定为广告", verdict.isAd)
+    }
+
+    @Test
+    fun `OCR噪声_前缀杂字不影响命中`() {
+        for (noisy in listOf("公上滑继续着短剧", "く上滑继续看短剧", "∩上滑继续观看短剧")) {
+            val verdict = AdClassifier.assess(snapshot(node(noisy)), rule)
+            assertTrue("「$noisy」应判定为广告", verdict.isAd)
+        }
+    }
+
+    /**
+     * 用户口径: 「能识别到上滑 和短剧 就可以划走」。
+     *
+     * 中间那串字完全认不出来时也必须命中 —— OCR 把「继续观看」糊成什么样都有可能,
+     * 只要「上滑」和「短剧」两个词都在同一个文本块里就够了。
+     */
+    @Test
+    fun `只认得出上滑和短剧_中间全糊了也要命中`() {
+        for (broken in listOf("上滑继续观看短剧", "上滑继纟卖短剧", "上滑 短剧", "上滑即可跳过继续看短剧")) {
+            val verdict = AdClassifier.assess(snapshot(node(broken)), rule)
+            assertTrue("「$broken」应判定为广告", verdict.isAd)
+        }
+    }
+
+    /**
+     * 跨节点组合: 两个词分别落在不同节点上也应命中(用户口径的严格实现)。
+     */
+    @Test
+    fun `上滑与短剧分处两个节点也命中`() {
+        val verdict = AdClassifier.assess(
+            snapshot(node("上滑继续", top = 2400), node("短剧", top = 2470)),
+            rule,
+        )
+        assertTrue("同屏出现「上滑」与「短剧」应判定为广告", verdict.isAd)
+    }
+
+    /**
+     * 但**正片页必须压得住**。
+     *
+     * 红果正片页带「（番茄）微短剧备字（2026）第061488号」, 本身就含"短剧"两个字。
+     * 如果组合特征能压制正片保护, 那么"备案号 + 任意上滑提示"就能把正片划掉。
+     */
+    @Test
+    fun `正片页含短剧备案号且带上滑提示时仍然受保护`() {
+        val verdict = AdClassifier.assess(
+            snapshot(
+                node("第86集"),
+                node("选集 · 已完结 · 全168集"),
+                node("（番茄）微短剧备字（2026）第061488号"),
+                node("上滑查看更多"),
+            ),
+            rule,
+        )
+        assertFalse("正片保护必须压掉组合特征", verdict.isAd)
+        assertTrue(verdict.isDramaProtected)
     }
 
     @Test

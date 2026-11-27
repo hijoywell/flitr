@@ -83,7 +83,14 @@ class VideoAdStateMachineTest {
             appName = "红果短剧",
             debounceMs = 450,
             adIndicators = AdIndicators(
-                anyTextRegex = listOf("^广告$"),
+                anyTextRegex = listOf(
+                    "^广告$",
+                    "^不感兴趣$",
+                    "^去商城购买$",
+                    "^图集\\d+/\\d+$",
+                    "商家推荐",
+                    "^\\s*@?拼多多\\s*$",
+                ),
                 allTextRegex = listOf("^返回$", "^上滑继续观看短剧$"),
             ),
             normalDramaSafeguards = DramaSafeguards(
@@ -363,18 +370,133 @@ class VideoAdStateMachineTest {
         machine.onSnapshot(thick, now = 10_000)
         assertTrue(machine.state is VideoHostState.DebouncingAd)
 
-        // 连喂超过容忍次数的正片帧
-        var now = 11_000L
+        // 喂正片帧, 直到超过宽容时长
+        var now = 10_500L
         var last = machine.onSnapshot(drama, now)
-        for (i in 0 until VideoAdStateMachine.AD_MISS_TOLERANCE + 1) {
-            now += 1_000L
+        while (now - 10_500L <= VideoAdStateMachine.AD_MISS_GRACE_MS + 1000L) {
+            now += 500L
             last = machine.onSnapshot(drama, now)
         }
         assertTrue(
-            "连续正片帧应复位到 WatchingNormalVideo, 实际=${last.state}",
+            "连续正片帧超容忍后应复位到 WatchingNormalVideo, 实际=${last.state}",
             last.state is VideoHostState.WatchingNormalVideo,
         )
         assertTrue("复位后不应有动作", last.commands.none { it is AutomationCommand.SwipeUp })
+    }
+
+    /**
+     * 高频薄帧不能把宽容额度吃光。
+     *
+     * 同步判定每 300ms 喂一帧薄帧, 按帧数计的容忍两秒内就耗尽了,
+     * 广告确认被打断 —— 真机表现就是"广告又不动了"。按**时长**计则不受采样频率影响。
+     */
+    @Test
+    fun `高频薄帧不打断广告观察`() {        val machine = VideoAdStateMachine(ruleWithCombo)
+        val thick = snapshot(node("返回"), node("上滑继续观看短剧"))
+        val thin = snapshot()
+
+        machine.onSnapshot(thick, now = 10_000)
+        assertTrue(machine.state is VideoHostState.DebouncingAd)
+
+        // 密集喂薄帧(每 300ms 一帧, 共 10 帧 = 3 秒), 全程都在宽容时长内
+        var now = 10_300L
+        var swiped = false
+        repeat(10) {
+            val r = machine.onSnapshot(thin, now)
+            if (r.commands.any { it is AutomationCommand.SwipeUp }) swiped = true
+            now += 300L
+        }
+        assertTrue("薄帧不应打断观察, 状态仍应是观察/执行", machine.state !is VideoHostState.WatchingNormalVideo)
+
+        // 厚帧回来后应能完成确认
+        val done = machine.onSnapshot(thick, now)
+        assertTrue(
+            "厚帧回来应完成上滑, 实际=${done.state} cmds=${done.commands}",
+            done.commands.any { it is AutomationCommand.SwipeUp } || swiped,
+        )
+    }
+
+    /**
+     * 真机回归: 商城图集广告(玻璃水)节点树里有 4+ 条文本(商城好物省心选/不感兴趣/
+     * 去商城购买/已售N件), 超过 OCR 触发阈值导致 OCR 从不运行, 而决定性的
+     * 「上滑继续看短剧」画在视频层里节点树看不到 —— 结果规则永远不命中。
+     * 修法: 把商城卡片特征文本(不感兴趣/去商城购买/图集N/N)加进 anyTextRegex,
+     * 让节点树单独就能确认广告。这些控件正片页绝不会出现。
+     */
+    @Test
+    fun `商城图集广告卡片文本即可确认广告`() {
+        val machine = VideoAdStateMachine(ruleWithCombo)
+        val page = snapshot(
+            node("商城好物省心选"),
+            node("不感兴趣"),
+            node("去商城购买"),
+            node("已售647件"),
+        )
+        machine.onSnapshot(page, now = 10_000)
+        val result = machine.onSnapshot(page, now = 10_500)
+        assertTrue(
+            "商城卡片文本应命中广告并上滑, 实际=${result.state} cmds=${result.commands}",
+            result.commands.any { it is AutomationCommand.SwipeUp },
+        )
+    }
+
+    /** 但正片页不会出现这些控件 —— 带剧集特征时绝不误判 */
+    @Test
+    fun `正片页即使多文本也不命中商城特征`() {
+        val machine = VideoAdStateMachine(ruleWithCombo)
+        val drama = snapshot(
+            node("第 471 集"),
+            node("选集"),
+            node("魔神人生: 弃子问天第一季"),
+            node("全屏观看"),
+        )
+        val result = machine.onSnapshot(drama, now = 10_000)
+        assertTrue(
+            "正片页不应被划走, 实际=${result.commands}",
+            result.commands.none { it is AutomationCommand.SwipeUp },
+        )
+    }
+
+    /**
+     * 真机回归: 信息流拼多多广告的识别特征全在 contentDescription 里。
+     *
+     * 该页节点树 text 只有 8 条导航栏文字, 广告的「拼多多」「商家推荐」
+     * 「@拼多多」完全不在 text 中 —— 早期 NodeTreeParser 用 `text ?: desc`
+     * 二选一, 空字符串被当成有值, desc 永远读不到, 这一页因此被判成 [NORMAL]。
+     *
+     * 本用例直接验证规则侧: desc 被并入 text 之后应能命中。
+     */
+    @Test
+    fun `信息流拼多多广告 desc 特征可命中`() {
+        val machine = VideoAdStateMachine(ruleWithCombo)
+        // 节点树 text 只有底部导航, 广告信息以 desc 形式落在节点上
+        val page = snapshot(
+            node("首页"),
+            node("剧场"),
+            node("商城"),
+            node("我的"),
+            node("拼多多"),
+            node("商家推荐"),
+            node("@拼多多"),
+        )
+        machine.onSnapshot(page, now = 10_000)
+        val result = machine.onSnapshot(page, now = 10_500)
+        assertTrue(
+            "商家推荐/拼多多 特征应命中广告, 实际=${result.state} cmds=${result.commands}",
+            result.commands.any { it is AutomationCommand.SwipeUp },
+        )
+    }
+
+    /** 普通正片信息流(纯导航文字 + 剧集)不应被这些新特征误伤 */
+    @Test
+    fun `普通信息流页不命中商家推荐特征`() {
+        val machine = VideoAdStateMachine(ruleWithCombo)
+        val drama = snapshot(node("首页"), node("剧场"), node("推荐"))
+        val result = machine.onSnapshot(drama, now = 10_000)
+        assertTrue(
+            "普通信息流不应被划走, 实际=${result.commands}",
+            result.commands.none { it is AutomationCommand.SwipeUp },
+        )
     }
 }
 

@@ -63,8 +63,25 @@ class NodeTreeParser(
             // 结果在红果的广告页上一条文本都拿不到 —— 实测踩过这个坑。
             // 现在只过滤"是否记录本节点", 不影响继续下钻; 规模由 maxNodes 兜底。
             if (visible && !bounds.isEmpty) {
-                val rawText = node.text?.toString()?.takeIf { it.isNotBlank() }
-                    ?: node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+                // text 与 contentDescription 都要读, 不能二选一。
+                //
+                // 早期这里写的是 `text ?: contentDescription`, 看起来合理, 实际会把
+                // 一整类广告漏掉: 红果信息流里的拼多多广告, 商品卡/「商家推荐」/
+                // 「@拼多多」/ 推广文案这 4 个关键节点 **text 都是空字符串**,
+                // 内容全在 contentDescription 里。`?:` 只对 null 生效, 空字符串会
+                // 被当成"有值"接受, contentDescription 于是永远读不到 ——
+                // 实测这一页因此被判成 [NORMAL], 广告挂在屏幕上一动不动。
+                //
+                // 两者都有值时拼接而不是丢弃: 无障碍里 text 与 desc 描述的是
+                // 同一控件的不同维度(可见文字 / 辅助说明), 合起来才是完整语义。
+                val textPart = node.text?.toString()?.takeIf { it.isNotBlank() }
+                val descPart = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+                val rawText = when {
+                    textPart != null && descPart != null -> {
+                        if (textPart.contains(descPart)) textPart else "$textPart $descPart"
+                    }
+                    else -> textPart ?: descPart
+                }
                 val viewId = node.viewIdResourceName
 
                 if (rawText != null || viewId != null) {

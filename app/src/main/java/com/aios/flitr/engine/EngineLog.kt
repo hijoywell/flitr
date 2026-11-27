@@ -67,4 +67,45 @@ object EngineLog {
 
     private const val SNAPSHOT_THROTTLE_MS = 1500L
     private const val RATE_WINDOW_MS = 5000L
+
+    // ---------- 翻页探针 ----------
+    private var probeWindowStart = 0L
+    private var probeCount = 0
+    private val probeBuckets = LinkedHashMap<String, Int>()
+
+    /**
+     * 记录一条视频页事件的特征, 每 30 秒汇总一次。
+     *
+     * 目的很具体: 判断「翻页」能不能只靠事件本身识别出来。
+     * 如果能, 引擎就可以只在翻页时刻采样, 播放过程中完全静默 —— 功耗归零;
+     * 如果不能(翻页和播放抖动的事件特征完全一样), 就必须保留定时采样。
+     *
+     * 汇总的 key 是 `事件类型 + contentChangeTypes + 类名`, 直方图一眼能看出
+     * 哪些是高频噪声、哪些是低频的"结构性变化"。
+     */
+    fun eventProbe(type: Int, cct: Int, className: String?, sourceHasText: Boolean, now: Long) {
+        if (probeWindowStart == 0L) probeWindowStart = now
+        probeCount++
+        val typeName = when (type) {
+            android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "CONTENT"
+            android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WIN_STATE"
+            android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SCROLLED -> "SCROLL"
+            else -> type.toString()
+        }
+        val cls = className?.substringAfterLast('.') ?: "-"
+        val key = "$typeName/cct=$cct/$cls/txt=$sourceHasText"
+        probeBuckets[key] = (probeBuckets[key] ?: 0) + 1
+
+        if (now - probeWindowStart >= 30_000L) {
+            val total = probeCount
+            val top = probeBuckets.entries
+                .sortedByDescending { it.value }
+                .take(8)
+                .joinToString(" | ") { "${it.key} x${it.value}" }
+            Log.i(TAG, "PROBE ${total}events/30s :: $top")
+            probeBuckets.clear()
+            probeCount = 0
+            probeWindowStart = now
+        }
+    }
 }

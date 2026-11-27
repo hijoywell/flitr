@@ -50,6 +50,18 @@ class AutomationCoordinator(
     /** 判定摘要去重, 见 handleVideo 里的 DIAG 日志 */
     private var lastDiagKey: String? = null
 
+    /** 最近一次判定所属的包名, 供 [lastAssessment] 取到对的那台状态机 */
+    private var lastAssessedPkg: String? = null
+
+    /**
+     * 最近一帧的广告判定结果。
+     *
+     * 服务层用它决定"还有没有必要跑 OCR": 节点树已经给出强证据时(例如底部
+     * 「上滑继续看短剧」+「返回」同时命中), 再等一次 OCR 往返只会白白拖慢反应速度。
+     */
+    val lastAssessment: AdAssessment?
+        get() = lastAssessedPkg?.let { machines[it]?.lastAssessment }
+
     /** 开屏通道: 命中即点, 命中后关闭时间窗。 */
     fun handleSplash(snapshot: ScreenSnapshot, elapsedMs: Long, appName: String): Boolean {
         val verdict = splashEngine.evaluate(snapshot)
@@ -96,6 +108,7 @@ class AutomationCoordinator(
         }
 
         val machine = machines.getOrPut(snapshot.packageName) { VideoAdStateMachine(rule) }
+        lastAssessedPkg = snapshot.packageName
         val evaluation = machine.onSnapshot(snapshot, now)
         val assessment = machine.lastAssessment
 

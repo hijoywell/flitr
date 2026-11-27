@@ -40,6 +40,24 @@ class HumanGestureDispatcher(
     @Volatile
     private var inFlight: Boolean = false
 
+    /** 看门狗用, 主线程 handler。见 [dispatch]。 */
+    private val watchdog = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * 本引擎自己派发的手势要到什么时候才算"结束"。
+     *
+     * 为什么必须记: `TouchOutsideWatcher` 用 FLAG_WATCH_OUTSIDE_TOUCH 监听手指按下,
+     * 而 `dispatchGesture` 注入的触摸走的是同一条输入通路 —— 我们自己划的那一下
+     * 也会被当成"用户在操作", 于是触发 3 秒避让冷却。结果是每划走一条广告,
+     * 下一条广告就要多等 3 秒才可能被处理, 体感就是"识别特别慢"。
+     * 这里记录一个自用手势时间窗, 上层据此忽略自己的触摸。
+     */
+    @Volatile
+    private var selfGestureUntil: Long = 0L
+
+    /** [now] 时刻是否处于本引擎自己派发的手势窗口内。 */
+    fun isSelfGesture(now: Long): Boolean = now < selfGestureUntil
+
     val isBusy: Boolean get() = inFlight
 
     /**
@@ -115,16 +133,27 @@ class HumanGestureDispatcher(
 
     private fun dispatch(gesture: GestureDescription, onDone: (Boolean) -> Unit): Boolean {
         inFlight = true
+        val durationMs = gesture.getStroke(0)?.duration ?: 0L
+        // 自己这一下触摸不算"用户操作", 见 selfGestureUntil 的说明。
+        selfGestureUntil = android.os.SystemClock.uptimeMillis() + durationMs + SELF_GESTURE_GRACE_MS
+        // 看门狗: 系统吞掉回调时(ColorOS 上实测发生过), inFlight 会永久卡在 true,
+        // 之后所有手势都静默 no-op —— 表现是"日志里划了, 屏幕上没动"。
+        // 手势时长 + 1.5s 还没收到回调, 就强制解锁。正常回调会先到, 这里只是兜底。
+        watchdog.postDelayed({
+            if (inFlight) inFlight = false
+        }, durationMs + 1500L)
         val ok = runCatching {
             service.dispatchGesture(
                 gesture,
                 object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
+                        watchdog.removeCallbacksAndMessages(null)
                         inFlight = false
                         onDone(true)
                     }
 
                     override fun onCancelled(gestureDescription: GestureDescription?) {
+                        watchdog.removeCallbacksAndMessages(null)
                         inFlight = false
                         onDone(false)
                     }
@@ -132,7 +161,10 @@ class HumanGestureDispatcher(
                 null,
             )
         }.getOrDefault(false)
-        if (!ok) inFlight = false
+        if (!ok) {
+            watchdog.removeCallbacksAndMessages(null)
+            inFlight = false
+        }
         return ok
     }
 
@@ -148,6 +180,9 @@ class HumanGestureDispatcher(
     companion object {
         const val MIN_DURATION_MS = 185L
         const val MAX_DURATION_MS = 310L
+
+        /** 手势结束后的宽限, 覆盖系统把 ACTION_OUTSIDE 投递上来的延迟 */
+        const val SELF_GESTURE_GRACE_MS = 400L
 
         /** 距离阈值, 用于判断两次点击是否算"同一点" */
         fun distance(a: TapSpec, b: TapSpec): Float =

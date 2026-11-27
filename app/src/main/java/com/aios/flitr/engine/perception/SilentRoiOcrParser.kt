@@ -71,6 +71,8 @@ class SilentRoiOcrParser(
                 workExecutor,
                 object : AccessibilityService.TakeScreenshotCallback {
                     override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                        val hb = screenshot.hardwareBuffer
+                        EngineLog.d("OCR shot ok ${hb.width}x${hb.height}")
                         val nodes = runCatching { process(screenshot) }.getOrDefault(emptyList())
                         capturing = false
                         mainExecutor.execute { onResult(nodes) }
@@ -95,13 +97,28 @@ class SilentRoiOcrParser(
         val buffer = screenshot.hardwareBuffer
         val colorSpace = screenshot.colorSpace
         return try {
-            val hardware = Bitmap.wrapHardwareBuffer(buffer, colorSpace) ?: return emptyList()
+            val hardware = Bitmap.wrapHardwareBuffer(buffer, colorSpace)
+            if (hardware == null) {
+                EngineLog.w("OCR wrapHardwareBuffer returned null")
+                return emptyList()
+            }
             // 硬件位图不能直接裁剪, 先落到可读配置
-            val software = hardware.copy(Bitmap.Config.ARGB_8888, false) ?: return emptyList()
+            val software = hardware.copy(Bitmap.Config.ARGB_8888, false)
             hardware.recycle()
+            if (software == null) {
+                EngineLog.w("OCR hardware.copy returned null")
+                return emptyList()
+            }
 
             val w = software.width
             val h = software.height
+            // 诊断: 采 5 个点判断是不是黑帧/空帧, 直接定位「拿到的图对不对」
+            val p0 = sample(software, w / 4, h / 4)
+            val p1 = sample(software, w / 2, h / 2)
+            val p2 = sample(software, 3 * w / 4, 3 * h / 4)
+            val p3 = sample(software, w / 2, h / 8)
+            val p4 = sample(software, w / 2, h - (h / 24).coerceAtLeast(1))
+            EngineLog.d("OCR frame ${w}x${h} px=$p0,$p1,$p2,$p3,$p4")
             val topH = (h * TOP_RATIO).toInt()
             val bottomH = (h * BOTTOM_RATIO).toInt()
             val bottomTop = h - bottomH
@@ -125,6 +142,8 @@ class SilentRoiOcrParser(
 
             val blocks = kotlinx.coroutines.runBlocking { recognizer.recognize(combined) }
             combined.recycle()
+            // 诊断: 无论是否为 0 都打印, 区分「黑帧导致 0」和「识别失败导致 0」
+            EngineLog.d("OCR recognize blocks=${blocks.size}")
 
             val nodes = blocks.mapNotNull { block ->
                 // 把拼接图里的 y 换算回屏幕坐标
@@ -152,9 +171,18 @@ class SilentRoiOcrParser(
                 EngineLog.d("OCR ${nodes.size} blocks: " + nodes.take(8).joinToString(" / ") { it.normalized })
             }
             nodes
+        } catch (t: Throwable) {
+            EngineLog.w("OCR process threw ${t.javaClass.simpleName}: ${t.message}")
+            emptyList()
         } finally {
             runCatching { buffer.close() }
         }
+    }
+
+    /** 采样一个像素点, 输出 ARGB 十六进制, 用于判断抓帧是否为空/黑。 */
+    private fun sample(bmp: Bitmap, x: Int, y: Int): String {
+        val px = runCatching { bmp.getPixel(x.coerceIn(0, bmp.width - 1), y.coerceIn(0, bmp.height - 1)) }.getOrDefault(0)
+        return "0x%08X".format(px)
     }
 
     companion object {

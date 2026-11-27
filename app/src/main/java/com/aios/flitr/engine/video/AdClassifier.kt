@@ -63,6 +63,18 @@ object AdClassifier {
     private val CLOSE_TEXT = Regex("^(×|✕|X|关闭|关闭广告)$")
     private val COUNTDOWN_HINT = Regex("(?:后可?(?:领取|解锁|跳过|划走|继续)|解锁|倒计时|奖励)")
 
+    /**
+     * 转化类 CTA 黑名单: **任何情况下都不点**。
+     *
+     * 事故来源: 红果拼多多信息流广告底部有「去领取」按钮, 规则把它当成了中途挽留弹窗的
+     * 「继续观看」按钮, 于是 Flitr 主动点了它 —— 直接进入商品下单页。这违反了
+     * 「宁可漏关, 不可误关」的底线: 漏划一条广告只是多看几秒, 误点一次会真的下单。
+     *
+     * 这条黑名单独立于 JSON 规则, 即使以后有人往 keepWatchingDialogBtnRegex 里加词,
+     * 命中这里的节点也不会被点击。
+     */
+    private val CTA_DENY = Regex("(领取|抢购|购买|下单|下载|安装|去看看|查看详情|了解详情|领券|打开|进入|去逛逛|立即购买)")
+
     fun assess(snapshot: ScreenSnapshot, rule: CompiledVideoRule): AdAssessment {
         val adByText = snapshot.anyMatch(rule.adTextPatterns)
         val adByAll = if (rule.adAllPatterns.isNotEmpty() && snapshot.allMatch(rule.adAllPatterns)) {
@@ -85,10 +97,17 @@ object AdClassifier {
         val countdownSeconds = countdownHit?.second
 
         val completedNode = snapshot.anyMatch(rule.completedPatterns)
-        val keepWatching = snapshot.anyMatch(rule.keepWatchingPatterns)
+        val keepWatchingRaw = snapshot.anyMatch(rule.keepWatchingPatterns)
+        // 兜底: 挽留按钮里混进转化 CTA 时一律放弃点击(见 CTA_DENY 的说明)
+        val keepWatching = keepWatchingRaw?.takeIf { !CTA_DENY.containsMatchIn(it.normalized) }
         val closeByViewId = snapshot.anyViewIdEndsWith(rule.closeViewIdSuffixes)
         val closeByText = snapshot.nodes.firstOrNull { CLOSE_TEXT.matches(it.normalized) }
-        val closeNode = closeByViewId ?: closeByText
+        // 关闭按钮必须是"小按钮"。控件 id 命中但面积接近整屏时(某些 SDK 把 close 挂在
+        // 全屏容器上), 点它的中心等于点广告主体, 会直接打开落地页 —— 一律放弃。
+        val closeNode = (closeByViewId ?: closeByText)?.takeIf { node ->
+            val screenArea = snapshot.screenArea
+            screenArea <= 0L || node.bounds.area <= screenArea * MAX_CLOSE_AREA_RATIO
+        }
 
         val panelOpen = rule.panelOpenPatterns.isNotEmpty() &&
             rule.panelOpenPatterns.any { p -> snapshot.nodes.any { p.containsMatchIn(it.normalized) } }
@@ -102,8 +121,12 @@ object AdClassifier {
          * 只有"广告"两个字属于弱信号 —— 正片页里完全可能因为角标、评论、推荐位出现这两个字,
          * 仅凭弱信号就划走正片是不可接受的错误, 所以正片保护会压掉它。
          * 反过来, 解锁类激励广告即使浮在正片之上, 也一定带倒计时或 SDK 控件 id, 不会漏。
+         *
+         * 组合特征([adByAll])**不再算强信号**: 规则里「上滑」+「短剧」这种组合特征放宽之后,
+         * 正片页也完全可能同时出现(红果正片页带「（番茄）微短剧备字…」备案号, 本身就含"短剧")。
+         * 让它压制正片保护, 就等于允许"备案号 + 任意上滑提示"把正片划掉。宁可漏, 不可误。
          */
-        val strongAdSignal = adByViewId != null || countdownIsAd || completedNode != null || adByAll != null
+        val strongAdSignal = adByViewId != null || countdownIsAd || completedNode != null
 
         val dramaProtected = rule.dramaAllPatterns.isNotEmpty() &&
             snapshot.allMatch(rule.dramaAllPatterns) &&
@@ -137,4 +160,7 @@ object AdClassifier {
             confidence = confidence,
         )
     }
+
+    /** 关闭按钮允许占屏面积上限。真机上的 × 通常远小于 1%, 这里留足余量。 */
+    private const val MAX_CLOSE_AREA_RATIO = 0.15f
 }

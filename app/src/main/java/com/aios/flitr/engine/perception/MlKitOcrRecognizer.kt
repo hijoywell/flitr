@@ -1,6 +1,7 @@
 package com.aios.flitr.engine.perception
 
 import android.graphics.Bitmap
+import com.aios.flitr.engine.EngineLog
 import com.aios.flitr.engine.model.Bounds
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -31,17 +32,30 @@ class MlKitOcrRecognizer : OcrRecognizer, AutoCloseable {
 
     override suspend fun recognize(bitmap: Bitmap): List<OcrBlock> =
         suspendCancellableCoroutine { cont ->
-            val image = runCatching { InputImage.fromBitmap(bitmap, 0) }.getOrNull()
+            val imageResult = runCatching { InputImage.fromBitmap(bitmap, 0) }
+            if (imageResult.isFailure) {
+                val e = imageResult.exceptionOrNull()
+                EngineLog.w("OCR InputImage.fromBitmap threw: ${e?.javaClass?.simpleName}: ${e?.message} cfg=${bitmap.config} ${bitmap.width}x${bitmap.height}")
+                e?.stackTrace?.take(6)?.forEach { fr ->
+                    EngineLog.w("  at ${fr.className}.${fr.methodName}(${fr.fileName}:${fr.lineNumber})")
+                }
+                cont.resume(emptyList())
+                return@suspendCancellableCoroutine
+            }
+            val image = imageResult.getOrNull()
             if (image == null) {
+                EngineLog.w("OCR InputImage.fromBitmap returned null cfg=${bitmap.config} ${bitmap.width}x${bitmap.height}")
                 cont.resume(emptyList())
                 return@suspendCancellableCoroutine
             }
             recognizer.process(image)
                 .addOnSuccessListener { text ->
+                    EngineLog.d("OCR raw blocks=${text.textBlocks.size} text=\"${text.text.take(120)}\"")
                     if (cont.isActive) cont.resume(text.toBlocks())
                 }
-                .addOnFailureListener {
-                    // 识别失败不应该影响主流程: 返回空列表, 上层继续走纯节点树判定
+                .addOnFailureListener { e ->
+                    // 诊断: ML Kit 静默失败会表现为「OCR 一直 0 blocks」, 这里必须打出来
+                    EngineLog.w("OCR MLKit recognize failed: ${e.javaClass.simpleName}: ${e.message}")
                     if (cont.isActive) cont.resume(emptyList())
                 }
         }

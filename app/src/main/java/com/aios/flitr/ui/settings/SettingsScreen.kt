@@ -227,7 +227,7 @@ fun SettingsScreen(vm: FlitrViewModel) {
             HairlineDivider()
             ToggleRow(
                 title = "常驻状态通知",
-                desc = "降低被系统回收的概率",
+                desc = "前台服务保活 · 关掉后更容易被系统回收",
                 checked = prefs.persistentNotification,
                 onChange = { vm.setPersistentNotification(it) },
             )
